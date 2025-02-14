@@ -15,35 +15,35 @@ if [ ! -d "$log_path" ]; then
     mkdir -p "$log_path"
 fi
 
-bash ./scripts_self/cogact_put_in_drawer_visual_matching.sh $ckpt_path  > "${log_path}/log1.log" 2>&1 &
+bash ./scripts_self/cogact_put_in_drawer_visual_matching.sh $ckpt_path 0 > "${log_path}/log1.log" 2>&1 &
 pid1=$!
 echo "测试cogact_put_in_drawer_visual_matching: $pid1"
 
-bash ./scripts_self/cogact_put_in_drawer_variant_agg.sh $ckpt_path > "${log_path}/log2.log" 2>&1 &
+bash ./scripts_self/cogact_put_in_drawer_variant_agg.sh $ckpt_path 1 > "${log_path}/log2.log" 2>&1 &
 pid2=$!
 echo "测试cogact_put_in_drawer_variant_agg: $pid2"
 
-bash ./scripts_self/cogact_pick_coke_can_visual_matching.sh $ckpt_path  > "${log_path}/log3.log" 2>&1 &
+bash ./scripts_self/cogact_pick_coke_can_visual_matching.sh $ckpt_path 2 > "${log_path}/log3.log" 2>&1 &
 pid3=$!
 echo "测试cogact_pick_coke_can_visual_matching: $pid3"
 
-bash ./scripts_self/cogact_pick_coke_can_variant_agg.sh $ckpt_path  > "${log_path}/log4.log" 2>&1 &
+bash ./scripts_self/cogact_pick_coke_can_variant_agg.sh $ckpt_path 3 > "${log_path}/log4.log" 2>&1 &
 pid4=$!
 echo "测试cogact_pick_coke_can_variant_agg: $pid4"
 
-bash ./scripts_self/cogact_move_near_visual_matching.sh $ckpt_path  > "${log_path}/log5.log" 2>&1 &
+bash ./scripts_self/cogact_move_near_visual_matching.sh $ckpt_path 4 > "${log_path}/log5.log" 2>&1 &
 pid5=$!
 echo "测试cogact_move_near_visual_matching: $pid5"
 
-bash ./scripts_self/cogact_move_near_variant_agg.sh $ckpt_path  > "${log_path}/log6.log" 2>&1 &
+bash ./scripts_self/cogact_move_near_variant_agg.sh $ckpt_path 5 > "${log_path}/log6.log" 2>&1 &
 pid6=$!
 echo "测试cogact_move_near_variant_agg: $pid6"
 
-bash ./scripts_self/cogact_drawer_variant_agg.sh $ckpt_path  > "${log_path}/log7.log" 2>&1 &
+bash ./scripts_self/cogact_drawer_variant_agg.sh $ckpt_path 6 > "${log_path}/log7.log" 2>&1 &
 pid7=$!
 echo "测试cogact_drawer_variant_agg: $pid7"
 
-bash ./scripts_self/cogact_bridge.sh $ckpt_path  > "${log_path}/log8.log" 2>&1 &
+bash ./scripts_self/cogact_bridge.sh $ckpt_path 7 > "${log_path}/log8.log" 2>&1 &
 pid8=$!
 echo "测试cogact_bridge: $pid8"
 
