@@ -18,7 +18,8 @@ from prismatic.models.registry import GLOBAL_REGISTRY, MODEL_REGISTRY
 from prismatic.models.vlms import PrismaticVLM
 from prismatic.overwatch import initialize_overwatch
 
-from vla import CogACT
+from vla import CogACT_bb, CogACT, CogACT_RAG, CogACT_MLP_HEAD, CogACT_Attn_HEAD, CogACT_Attn_HEAD_small, CogACT_SYS1
+import torch
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
@@ -169,10 +170,10 @@ def load_vla(
     # Load VLA Config (and corresponding base VLM `ModelConfig`) from `config.json`
     with open(config_json, "r") as f:
         vla_cfg = json.load(f)["vla"]
-        if 'qwen25' in vla_cfg["base_vlm"]:
+        if 'qwen' in vla_cfg["base_vlm"]:
             model_cfg = ModelConfig.get_choice_class('prism-qwen25-extra-dinosiglip-224px+0_5b')()
         else:
-            model_cfg = ModelConfig.get_choice_class(vla_cfg["base_vlm"])()
+            model_cfg = ModelConfig.get_choice_class('prism-dinosiglip-224px+7b')()
 
     # Load Dataset Statistics for Action Denormalization
     with open(dataset_statistics_json, "r") as f:
@@ -207,15 +208,59 @@ def load_vla(
     # Load VLM using `from_pretrained` (clobbers HF syntax... eventually should reconcile)
     overwatch.info(f"Loading VLA [bold blue]{model_cfg.model_id}[/] from Checkpoint")
 
-    vla = CogACT.from_pretrained(
-        checkpoint_pt,
-        model_cfg.model_id,
-        vision_backbone,
-        llm_backbone,
-        arch_specifier=model_cfg.arch_specifier,
-        freeze_weights=not load_for_training,
-        norm_stats=norm_stats,
-        **kwargs,
-    )
+    if "sys" in str(checkpoint_pt):
+        overwatch.warning(f" ================== You are loading CogACT_SYS1 ================== ")
+        vla = CogACT_SYS1.from_pretrained(
+            checkpoint_pt,
+            model_cfg.model_id,
+            vision_backbone,
+            llm_backbone,
+            arch_specifier=model_cfg.arch_specifier,
+            freeze_weights=not load_for_training,
+            norm_stats=norm_stats,
+            **kwargs,
+        )
+
+    elif "mlp" in str(checkpoint_pt):
+
+        overwatch.warning(f" ================== You are loading CogACT_MLP_HEAD ================== ")
+
+        vla = CogACT_MLP_HEAD.from_pretrained(
+            checkpoint_pt,
+            model_cfg.model_id,
+            vision_backbone,
+            llm_backbone,
+            arch_specifier=model_cfg.arch_specifier,
+            freeze_weights=not load_for_training,
+            norm_stats=norm_stats,
+            **kwargs,
+        )
+    elif "attn" in str(checkpoint_pt):
+        overwatch.warning(f" ================== You are loading CogACT_Attn_HEAD_small ================== ")
+
+        vla = CogACT_Attn_HEAD_small.from_pretrained(
+            checkpoint_pt,
+            model_cfg.model_id,
+            vision_backbone,
+            llm_backbone,
+            arch_specifier=model_cfg.arch_specifier,
+            freeze_weights=not load_for_training,
+            norm_stats=norm_stats,
+            **kwargs,
+        )
+    else:
+
+        overwatch.warning(f" ================== You are loading CogACT ================== ")
+
+        vla = CogACT.from_pretrained(
+            checkpoint_pt,
+            model_cfg.model_id,
+            vision_backbone,
+            llm_backbone,
+            arch_specifier=model_cfg.arch_specifier,
+            freeze_weights=not load_for_training,
+            norm_stats=norm_stats,
+            **kwargs,
+        )
 
     return vla

@@ -58,7 +58,7 @@ import math
 from flask import Flask, request, jsonify
 import tempfile
 import torch
-from vla import load_vla
+from vla import load_vla_rag
 from sim_cogact.adaptive_ensemble import AdaptiveEnsembler
 
 app = Flask(__name__)
@@ -90,12 +90,15 @@ class CogACTService:
         self.unnorm_key = unnorm_key
 
         print(f"*** unnorm_key: {unnorm_key} ***")
-        self.vla = load_vla(
+        self.vla = load_vla_rag(
           saved_model_path,
           load_for_training=False, 
           action_model_type=action_model_type,
           future_action_window_size=future_action_window_size,
           action_dim=action_dim,
+          rag_source='/mnt/petrelfs/yangshuai1/rep/TMP_CogACTmini_x_DIT_Atten_HisF_MultiF_R_Silence/test_rag.pt',
+          top_k = 3,
+          drop_p = 0,
         )
         if use_bf16:
             self.vla.vlm = self.vla.vlm.to(torch.bfloat16)
