@@ -675,6 +675,7 @@ def prepare(
         template.append_message(template.roles[0], old_question)
         template.append_message(template.roles[1], old_answer)
     template.append_message(template.roles[0], question)
+    template.append_message(template.roles[1], None)
     query = template.get_prompt()
 
     for num_patches in num_patches_list:
