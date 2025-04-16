@@ -190,16 +190,15 @@ class ActionWorldModel(nn.Module):
                                                 nn.SiLU(),
                                                 nn.Linear(head_token_size//2, (future_action_window_size + 1) * action_dim, bias=True),
                                         ) # 120M
-        vision_model = timm.create_model(  'vit_large_patch14_reg4_dinov2.lvd142m',
-                                                pretrained=True,
-                                                num_classes=0,  # remove classifier nn.Linear
-                                                img_size = 224
+        vision_model = timm.create_model(  'vit_small_patch14_reg4_dinov2.lvd142m',
+                                            pretrained=True,
+                                            num_classes=0,  # remove classifier nn.Linear
+                                            img_size = 224
                                             )
         # pretrained dino from OpenVLA
-        # vision_model.load_state_dict(torch.load(pertrained_dino))
         self.film_vision_model = FiLMedDinoVisionBackbone(vision_model, token_size)
 
-        self.visual_projector = nn.Sequential(  nn.Linear(1024, head_token_size, bias=True),
+        self.visual_projector = nn.Sequential(  nn.Linear(384, head_token_size, bias=True),
                                                 nn.SiLU(),
                                                 nn.Linear(head_token_size, head_token_size, bias=True),
                                                 )
@@ -215,7 +214,6 @@ class ActionWorldModel(nn.Module):
 
         self.default_dino_transform = timm.data.create_transform(**self.dino_data_cfg, is_training=False)
         
-        self.future_queries = nn.Parameter(torch.randn(future_action_window_size + 1, head_token_size))
         self.future_action_window_size = future_action_window_size
         self.action_dim = action_dim
         
@@ -223,7 +221,8 @@ class ActionWorldModel(nn.Module):
             print("Initialize world model from config (no pretrained weights)")
             # self.VQTokenizer = CompressiveVQModel.from_pretrained(world_model, subfolder='tokenizer', low_cpu_mem_usage=False)
             transformer_config = AutoConfig.from_pretrained(world_model, subfolder='transformer')
-            self.VideoGPT = AutoModelForCausalLM.from_config(transformer_config)
+            self.VideoGPT = AutoModelForCausalLM.from_config(transformer_config,
+                                                             attn_implementation="flash_attention_2",)
         else:
             # self.VQTokenizer = VQTokenizer
             self.VideoGPT = VideoGPT
@@ -852,7 +851,10 @@ class RLDSBatchTransform:
         else:
             dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"][0]
 
-        img = rlds_batch["observation"]["image_primary"]
+        if rlds_batch["observation"]["image_primary"].shape[0] > 1:
+            img = rlds_batch["observation"]["image_primary"]
+        else:
+            raise ValueError(f"Multiimage required")
 
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
 

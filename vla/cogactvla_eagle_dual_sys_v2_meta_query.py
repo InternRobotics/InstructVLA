@@ -271,6 +271,7 @@ class ActionWorldModel(nn.Module):
                 cognition_features: Optional[torch.FloatTensor] = None,
                 pixel_values: Optional[torch.FloatTensor] = None,
                 actions: Optional[torch.FloatTensor] = None,
+                t: Optional[torch.FloatTensor] = None,
                 indices_for_now=None):
 
         batch_size = cognition_features.shape[0]
@@ -286,7 +287,7 @@ class ActionWorldModel(nn.Module):
 
         # prepare flow matching variables
 
-        t = self.sample_fm_time(actions.shape[0]).to( device=actions.device, dtype=actions.dtype)
+        # t = self.sample_fm_time(actions.shape[0]).to( device=actions.device, dtype=actions.dtype)
         x0 = torch.randn_like(actions, device=actions.device, dtype=actions.dtype)
         x1 = actions
         psi_t = self.psi_t(x0, x1, t)
@@ -413,6 +414,7 @@ class CogACT(nn.Module):
         use_ema: bool = False,
         norm_stats: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = None,
         config_json = None,
+        meta_token_ids = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -451,7 +453,31 @@ class CogACT(nn.Module):
 
         self.vlm.neftune_alpha = None
         self.action_dim = action_dim
-        self.do_pretraing = False
+        self.meta_token_ids = meta_token_ids
+        self.min_meta_token = self.meta_token_ids[0]
+        self.max_meta_token = self.meta_token_ids[-1]
+
+        # Freeze all parameters in the model
+        for param in self.vlm.parameters():
+            param.requires_grad = False
+
+        lora_config = LoraConfig(
+                r=128,
+                lora_alpha=256,
+                target_modules=['self_attn.q_proj', 'self_attn.k_proj', 'self_attn.v_proj', 'self_attn.o_proj'],  # adjust based on model architecture
+                lora_dropout=0.05,
+                bias="none",
+                task_type=TaskType.CAUSAL_LM  # assuming a causal language model
+            )
+        
+        # Unfreeze only the new tokens' embeddings
+        new_token_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.new_tokens)  # Convert new tokens to their respective ids
+        self.vlm.language_model = get_peft_model(self.vlm.language_model, lora_config)
+        for token_id in new_token_ids:
+            self.vlm.language_model.base_model.model.model.embed_tokens.weight[token_id].requires_grad = True  # Unfreeze new token embeddings
+        self.vlm.language_model.print_trainable_parameters()
+        self.vlm.language_model.transformer_layer_cls = Qwen2DecoderLayer
+
 
     @property
     def llm_backbone(self):
@@ -483,6 +509,7 @@ class CogACT(nn.Module):
         action_masks = None,
         image_flags = None,
         sampling_type = None,
+        t = None,
         **kwargs,
     ) -> Tuple:
         """Run a forward pass through the VLM, returning a CausalLMOutputWithPast instance (contains loss)."""
@@ -512,6 +539,7 @@ class CogACT(nn.Module):
         if actions is None:
             # make it a vlm
             # from IPython import embed;embed()
+            per_device_batch_size = input_ids.shape[0]
             output: CausalLMOutputWithPast = self.vlm(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -521,45 +549,40 @@ class CogACT(nn.Module):
                 past_key_values=past_key_values,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
+                output_hidden_states = output_hidden_states,
                 return_dict=return_dict,
                 **kwargs,
             )
+
             return output.loss, output
         else:
             assert per_device_batch_size == actions.shape[0]
             assert input_ids.shape[0] == (per_device_batch_size * (self.past_action_window_size+1)), f"input_ids.shape[0] = {input_ids.shape[0]}, but should be {per_device_batch_size * (self.past_action_window_size+1)} "
 
-            if self.do_pretraing:
-                with torch.no_grad():
-                    repeated_cognition_features = self.vlm.language_model.get_input_embeddings()(input_ids[:, 280:]) # chunk image tokens
-            else:
-                first_past_indices = torch.arange(per_device_batch_size) * (self.past_action_window_size + 1)
+            first_past_indices = torch.arange(per_device_batch_size) * (self.past_action_window_size + 1)
+            
+            output: CausalLMOutputWithPast = self.vlm(
+                input_ids=input_ids[first_past_indices],
+                attention_mask=attention_mask[first_past_indices],
+                pixel_values=pixel_values[first_past_indices],
+                # labels=labels,
+                # inputs_embeds=inputs_embeds,
+                image_flags=torch.ones((first_past_indices.shape[0],1)).to( device=input_ids.device) if image_flags is None else image_flags,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
 
-                output: CausalLMOutputWithPast = self.vlm(
-                    input_ids=input_ids[first_past_indices],
-                    attention_mask=attention_mask[first_past_indices],
-                    pixel_values=pixel_values[first_past_indices],
-                    # labels=labels,
-                    # inputs_embeds=inputs_embeds,
-                    image_flags=torch.ones((first_past_indices.shape[0],1)).to( device=input_ids.device) if image_flags is None else image_flags,
-                    past_key_values=past_key_values,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                    output_hidden_states=output_hidden_states,
-                    return_dict=return_dict,
-                )
+            # extract the last hidden state and the learnable EOS token feature
+            last_hidden_states = output.hidden_states[-1]
+            
+            meta_feature_mask = (input_ids[first_past_indices] >= self.min_meta_token) & (input_ids[first_past_indices] <= self.max_meta_token)
+            meta_feature = last_hidden_states[torch.where(meta_feature_mask==1)].view(meta_feature_mask.size(0),-1 , last_hidden_states.shape[-1])
+            # extract the cognition feature
 
-                # extract the last hidden state and the learnable EOS token feature
-                last_hidden = output.hidden_states[-1]
-                
-                # extract the cognition feature
-                cumulative_sum = attention_mask[first_past_indices].cumsum(dim=1)
-                last_true_indices = (cumulative_sum == cumulative_sum.max(dim=1, keepdim=True)[0]).float().argmax(dim=1)  
-                expanded_indices = last_true_indices.unsqueeze(-1).expand(-1, last_hidden.size(-1))  
-                cognition_features = last_hidden.gather(1, expanded_indices.unsqueeze(1))  # [B*C, 1, D]
-
-                repeated_cognition_features = cognition_features.repeat_interleave(self.past_action_window_size + 1, dim=0)
+            repeated_cognition_features = meta_feature.repeat_interleave(self.past_action_window_size + 1, dim=0)
             assert repeated_cognition_features.shape[0] == per_device_batch_size * (self.past_action_window_size+1)
 
             # actions_history = actions[:,0:self.past_action_window_size,:]
@@ -574,10 +597,12 @@ class CogACT(nn.Module):
 
             # do batch sample
             # k = 2 # number of samples 
+            t =  t.repeat(self.past_action_window_size + 1)
             if sampling_type is None:
                 loss = self.action_model( cognition_features = repeated_cognition_features,
                             pixel_values = dict(dino = system2_pixel_values),
                             actions = actions_future,
+                            t = t,
                         )
             else:
                 B = per_device_batch_size
@@ -598,6 +623,7 @@ class CogACT(nn.Module):
                 loss = self.action_model( cognition_features = repeated_cognition_features[sampled_indices],
                     pixel_values = dict(dino = system2_pixel_values[sampled_indices]),
                     actions = actions_future[sampled_indices],
+                    t = t[sampled_indices],
                 )
             
             return loss, None
@@ -663,14 +689,24 @@ class CogACT(nn.Module):
                                                   use_fast=True,
                                                   trust_remote_code=True)
 
+        new_tokens = ['<new_token_{}>'.format(i) for i in range(256)]  # Create 256 new token names
+        tokenizer.add_tokens(new_tokens)  # Add them to the tokenizer
+        tokenizer.new_tokens = new_tokens
+        processor.tokenizer = tokenizer
+
+        # Resize the model's token embeddings to match the new vocabulary size
+        vlm.language_model.resize_token_embeddings(len(tokenizer))  # Resize the model's embeddings
+
+        # Freeze all parameters in the model
+        for param in vlm.parameters():
+            param.requires_grad = False
+
+        # Unfreeze only the new tokens' embeddings
+        new_token_ids = tokenizer.convert_tokens_to_ids(new_tokens)  # Convert new tokens to their respective ids
+
         vlm.img_context_token_id = processor.get_img_context_token()
         assert vlm.template == processor.model_spec.template
         assert vlm.num_image_token == processor.model_spec.num_image_token
-
-        # Freeze Weights
-        if freeze_weights:
-            vlm.requires_grad_(False)
-            vlm.eval()
 
         # Initialize CogACT
         cogact = CogACT(vlm,
@@ -682,6 +718,7 @@ class CogACT(nn.Module):
                         past_action_window_size = past_action_window_size,
                         use_ema = use_ema,
                         norm_stats = norm_stats,
+                        meta_token_ids = new_token_ids,
                         )
         
         model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")["model"]
@@ -742,13 +779,13 @@ class CogACT(nn.Module):
             },
             {
                 "role": "assistant", 
-                "content": ""
+                "content": "".join(self.processor.tokenizer.new_tokens)
             }
         ]
 
         # Prepare Inputs
-        inputs = self.processor.prepare_input({"prompt": prompt})
-        input_ids = inputs['input_ids'].to(self.vlm.device)
+        inputs = self.processor.preprocess_inputs_and_labels({"prompt": prompt})
+        input_ids = inputs['input_ids'].to(self.vlm.device).unsqueeze(0)
         pixel_values = inputs['pixel_values']
         sys1_pixel_values = dict(dino = self.action_model.default_dino_transform(image).unsqueeze(0).to(self.vlm.device))
 
@@ -774,10 +811,13 @@ class CogACT(nn.Module):
             )
 
         # Extract cognition feature
-        cognition_features = output.hidden_states[-1][0:,-1:]
+        last_hidden_states = output.hidden_states[-1]
+        
+        meta_feature_mask = (input_ids >= self.min_meta_token) & (input_ids <= self.max_meta_token)
+        meta_feature = last_hidden_states[torch.where(meta_feature_mask==1)].view(meta_feature_mask.size(0),-1 , last_hidden_states.shape[-1])
         # Sample random noise
-        BS, step, dim = cognition_features.shape
-        samples = self.action_model.sampling(   cognition_features = cognition_features,
+        BS, step, dim = meta_feature.shape
+        samples = self.action_model.sampling(   cognition_features = meta_feature,
                                                 pixel_values = sys1_pixel_values,
                                                 )
         normalized_actions = samples[0].cpu().numpy()
@@ -794,7 +834,7 @@ class CogACT(nn.Module):
             normalized_actions,
         )
 
-        return actions, normalized_actions, cognition_features
+        return actions, normalized_actions, meta_feature
 
     @staticmethod
     def _check_unnorm_key(norm_stats, unnorm_key):
@@ -859,7 +899,8 @@ class RLDSBatchTransform:
         pixel_values = []
         system2_pixel_values = []
         input_ids = []
-
+        labels = []
+        # tokenizer = self.processor.tokenizer
         for i in img:
             prompt = [
                 {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
@@ -870,22 +911,24 @@ class RLDSBatchTransform:
                 },
                 {
                     "role": "assistant", 
-                    "content": ""
+                    "content": "".join(self.processor.tokenizer.new_tokens)
                 }
             ]
 
-            inputs = self.processor.prepare_input({"prompt": prompt})
+            inputs = self.processor.preprocess_inputs_and_labels({"prompt": prompt})
 
             pixel_values.append(inputs['pixel_values'])
             img_array = np.squeeze(i).astype(np.uint8)
             pil_img = Image.fromarray(img_array)
             system2_pixel_values.append(self.image_processor(pil_img))
 
-            input_ids.append(inputs['input_ids'])
+            input_ids.append(inputs['input_ids'].unsqueeze(0))
+            labels.append(inputs['labels'].unsqueeze(0))
 
         pixel_values = torch.stack(pixel_values)
         system2_pixel_values = torch.stack(system2_pixel_values)
         input_ids = torch.cat(input_ids, dim=0)
+        labels = torch.cat(labels, dim=0)
 
         if rlds_batch["action"].shape[0] > 1:
             action = torch.tensor(action, dtype=torch.float32)
@@ -893,7 +936,7 @@ class RLDSBatchTransform:
             if "action_mask" in rlds_batch:
                 action_mask = torch.tensor(rlds_batch["action_mask"], dtype=torch.bool)
 
-        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=input_ids, 
+        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, 
                     dataset_name=dataset_name, actions=action, action_masks=action_mask, 
                     episode_idx=rlds_batch["idx"], frame_idx=rlds_batch['frame_idx'],
                     system2_pixel_values=system2_pixel_values
@@ -1037,27 +1080,38 @@ def load(
         ),
     )
 
-    llm_backbone = AutoModel.from_pretrained(
+    vlm = AutoModel.from_pretrained(
         llm_backbone_id,
         attn_implementation="flash_attention_2",
         trust_remote_code=True
         )
-    
-    llm_backbone.img_context_token_id = processor.get_img_context_token()
-    assert llm_backbone.template == processor.model_spec.template
-    assert llm_backbone.num_image_token == processor.model_spec.num_image_token
+
+    new_tokens = ['<new_token_{}>'.format(i) for i in range(256)]  # Create 256 new token names
+    tokenizer.add_tokens(new_tokens)  # Add them to the tokenizer
+    tokenizer.new_tokens = new_tokens
+    processor.tokenizer = tokenizer
+
+    # Resize the model's token embeddings to match the new vocabulary size
+    vlm.language_model.resize_token_embeddings(len(tokenizer))  # Resize the model's embeddings
+
+    vlm.img_context_token_id = processor.get_img_context_token()
+    assert vlm.template == processor.model_spec.template
+    assert vlm.num_image_token == processor.model_spec.num_image_token
+
+    new_token_ids = tokenizer.convert_tokens_to_ids(new_tokens)
 
     # Load VLM using `from_pretrained` (clobbers HF syntax... eventually should reconcile)
     overwatch.info(f"Loading VLM [bold blue]{llm_backbone_id}[/] from Checkpoint")
-    vlm = CogACT(
-        vlm = llm_backbone,
+    vla = CogACT(
+        vlm = vlm,
         config_json = config_json,
         tokenizer = tokenizer,
         processor = processor,
-        token_size= llm_backbone.config.llm_config.hidden_size
+        token_size= vlm.config.llm_config.hidden_size,
+        meta_token_ids = new_token_ids,
     )
 
-    return vlm
+    return vla
 
 # === Load Pretrained VLA Model ===
 def load_vla(
