@@ -105,7 +105,7 @@ def run_maniskill2_eval_single_episode(
 
     timestep = 0
     success = "failure"
-    flag=0
+
     # Step the environment
     while not (predicted_terminated or truncated):
         # step the model; "raw_action" is raw model action output; "action" is the processed action to be sent into maniskill env
@@ -124,13 +124,6 @@ def run_maniskill2_eval_single_episode(
         )
         
         success = "success" if done else "failure"
-        if(success=='success'):
-            flag+=1
-        else :
-            flag=0
-
-        if(flag==3):
-            break
         new_task_description = env.get_language_instruction()
         if new_task_description != task_description:
             task_description = new_task_description

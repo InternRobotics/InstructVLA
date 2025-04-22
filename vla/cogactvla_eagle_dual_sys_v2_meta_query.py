@@ -46,11 +46,6 @@ from transformers import (
     get_scheduler,
 )
 
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    CheckpointImpl,
-    apply_activation_checkpointing,
-    checkpoint_wrapper,
-)
 
 from vla.eagle_utils import EagleProcessor
 from types import SimpleNamespace
@@ -110,9 +105,9 @@ def model_forward(self):
         else:
             logits = None # remove lm head for faster vla training
 
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+        loss = None # use eagle loss
+        # if labels is not None:
+        #     loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -415,6 +410,7 @@ class CogACT(nn.Module):
         norm_stats: Dict[str, Dict[str, Dict[str, Dict[str, List[float]]]]] = None,
         config_json = None,
         meta_token_ids = None,
+        stage = "stage1",
         **kwargs,
     ) -> None:
         super().__init__()
@@ -458,25 +454,34 @@ class CogACT(nn.Module):
         self.max_meta_token = self.meta_token_ids[-1]
 
         # Freeze all parameters in the model
-        for param in self.vlm.parameters():
-            param.requires_grad = False
+        if stage == "stage1":
+            overwatch.info("Train the model in stage 1 with lora and learnable embeddings")
+            for param in self.vlm.parameters():
+                param.requires_grad = False
 
-        lora_config = LoraConfig(
-                r=128,
-                lora_alpha=256,
-                target_modules=['self_attn.q_proj', 'self_attn.k_proj', 'self_attn.v_proj', 'self_attn.o_proj'],  # adjust based on model architecture
-                lora_dropout=0.05,
-                bias="none",
-                task_type=TaskType.CAUSAL_LM  # assuming a causal language model
-            )
-        
-        # Unfreeze only the new tokens' embeddings
-        new_token_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.new_tokens)  # Convert new tokens to their respective ids
-        self.vlm.language_model = get_peft_model(self.vlm.language_model, lora_config)
-        for token_id in new_token_ids:
-            self.vlm.language_model.base_model.model.model.embed_tokens.weight[token_id].requires_grad = True  # Unfreeze new token embeddings
-        self.vlm.language_model.print_trainable_parameters()
+            lora_config = LoraConfig(
+                    r=128,
+                    lora_alpha=256,
+                    target_modules=['self_attn.q_proj', 'self_attn.k_proj', 'self_attn.v_proj', 'self_attn.o_proj'],  # adjust based on model architecture
+                    lora_dropout=0.05,
+                    bias="none",
+                    task_type=TaskType.CAUSAL_LM  # assuming a causal language model
+                )
+            
+            # Unfreeze only the new tokens' embeddings
+            new_token_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.new_tokens)  # Convert new tokens to their respective ids
+            self.vlm.language_model = get_peft_model(self.vlm.language_model, lora_config)
+            for token_id in new_token_ids:
+                self.vlm.language_model.base_model.model.model.embed_tokens.weight[token_id].requires_grad = True  # Unfreeze new token embeddings
+                self.vlm.language_model.base_model.model.lm_head.weight[token_id].requires_grad = True
+            self.vlm.language_model.print_trainable_parameters()
+        elif stage == "stage2":
+            overwatch.info("Train the model in stage 2 with all parameters")
+            for param in self.vlm.parameters():
+                param.requires_grad = True
+
         self.vlm.language_model.transformer_layer_cls = Qwen2DecoderLayer
+        self.stage = stage
 
 
     @property
@@ -551,6 +556,7 @@ class CogACT(nn.Module):
                 output_attentions=output_attentions,
                 output_hidden_states = output_hidden_states,
                 return_dict=return_dict,
+                forward_lm_head=True,
                 **kwargs,
             )
 
@@ -668,6 +674,7 @@ class CogACT(nn.Module):
         past_action_window_size: int = 5,
         use_ema: bool = False,
         norm_stats = None,
+        stage = "stage1",
         **kwargs,
     ) -> CogACT:
 
@@ -708,6 +715,12 @@ class CogACT(nn.Module):
         assert vlm.template == processor.model_spec.template
         assert vlm.num_image_token == processor.model_spec.num_image_token
 
+        model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")["model"]
+        is_a_lora_model = any('lora' in i for i in  model_state_dict['language_model'])
+        if not is_a_lora_model:
+            overwatch.warning("No LoRA parameters in the checkpoint, so we load weight before init LoRA")
+            vlm.language_model.load_state_dict(model_state_dict["language_model"])
+
         # Initialize CogACT
         cogact = CogACT(vlm,
                         processor = processor,
@@ -719,26 +732,24 @@ class CogACT(nn.Module):
                         use_ema = use_ema,
                         norm_stats = norm_stats,
                         meta_token_ids = new_token_ids,
+                        stage = stage,
                         )
-        
-        model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")["model"]
+
 
         assert (
             "mlp1" in model_state_dict and "language_model" in model_state_dict and "vision_model" in model_state_dict
         ), "PrismaticVLM `from_pretrained` expects checkpoint with keys for `projector`, `language_model` AND `vision_model`"
 
-        vlm.mlp1.load_state_dict(model_state_dict["mlp1"])
-        vlm.language_model.load_state_dict(model_state_dict["language_model"])
+        cogact.vlm.mlp1.load_state_dict(model_state_dict["mlp1"])
+        if is_a_lora_model:
+            overwatch.warning("LoRA parameters in the checkpoint, so we load weight after init LoRA")
+            cogact.vlm.language_model.load_state_dict(model_state_dict["language_model"])
         if "vision_model" in model_state_dict.keys():
-            vlm.vision_model.load_state_dict(model_state_dict["vision_model"])
+            cogact.vlm.vision_model.load_state_dict(model_state_dict["vision_model"])
 
         # Load ActionModel from Checkpoint
         if "action_model" in model_state_dict:
             cogact.action_model.load_state_dict(model_state_dict["action_model"])
-            if "ema_diffusion" in model_state_dict and use_ema:
-                cogact.ema_diffusion.load_state_dict(model_state_dict["ema_diffusion"])
-            elif use_ema:
-                cogact.ema_diffusion.load_state_dict(model_state_dict["action_model"])
         else:
             overwatch.warning("No ActionModel found in the pretrained checkpoint. Initializing a new one.")
         return cogact       
@@ -941,6 +952,8 @@ class RLDSBatchTransform:
                     episode_idx=rlds_batch["idx"], frame_idx=rlds_batch['frame_idx'],
                     system2_pixel_values=system2_pixel_values
                     )
+from torch.utils.data import DataLoader, Dataset, DistributedSampler, IterableDataset
+from itertools import cycle
 
 @dataclass
 class PaddedCollatorForActionPrediction:
@@ -948,6 +961,7 @@ class PaddedCollatorForActionPrediction:
     pad_token_id: int
     padding_side: str = "right"
     pixel_values_dtype: torch.dtype = torch.float32
+    mm_dataloader: DataLoader = None
 
     def __call__(self, instances: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
 
@@ -1002,7 +1016,13 @@ class PaddedCollatorForActionPrediction:
         )
         if dataset_names is not None:
             output["dataset_names"] = dataset_names
-        return output
+
+        if self.mm_dataloader is not None:
+            # co-training VLM
+            mm_batch = next(self.mm_dataloader)
+        else:
+            mm_batch = None
+        return output, mm_batch
 
 def get_vla_dataset_and_collator(
     data_root_dir: Path,
@@ -1019,7 +1039,9 @@ def get_vla_dataset_and_collator(
     future_action_window_size: int = 0,
     past_action_window_size: int = 1,         # Concatenated `past_action_window_size-1' actions and the current action for the input
     load_all_data_for_training: bool = True,  # Load all data for training, or only a subset
-    base_action_tokenizer: PreTrainedTokenizerBase = None
+    base_action_tokenizer: PreTrainedTokenizerBase = None,
+    mm_dataset = None,
+    mm_collator = None,
 ) -> Tuple[Dataset, ActionTokenizer, PaddedCollatorForActionPrediction]:
     """Initialize RLDS Dataset (wraps TFDS), ActionTokenizer, and initialize transform/collation functions."""
     if base_action_tokenizer is None:
@@ -1027,12 +1049,31 @@ def get_vla_dataset_and_collator(
     else:
         action_tokenizer = ActionTokenizer(base_action_tokenizer)
     # action_tokenizer = ActionTokenizer(tokenizer)
+    if mm_dataset is not None:
+        sampler = DistributedSampler(
+            mm_dataset,
+            num_replicas=overwatch.world_size(),
+            rank=overwatch.rank(),
+            shuffle=True,
+            seed=42,
+            drop_last=True,
+        )
+
+        mm_dataloader = DataLoader(
+            mm_dataset,
+            batch_size=2,
+            sampler=sampler,
+            collate_fn=mm_collator,
+            num_workers=4,
+        )
+    mm_iter = iter(mm_dataloader) if mm_dataset is not None else None
+    mm_iter = cycle(mm_iter) if mm_iter is not None else None # make it infinite
 
     batch_transform = RLDSBatchTransform(
         action_tokenizer, tokenizer, processor, image_processor
     )
     collator = PaddedCollatorForActionPrediction(
-        tokenizer.model_max_length, tokenizer.pad_token_id, padding_side=padding_side
+        tokenizer.model_max_length, tokenizer.pad_token_id, padding_side=padding_side, mm_dataloader = mm_iter
     )
 
     # Build RLDS Iterable Dataset
@@ -1059,7 +1100,8 @@ def load(
     hf_token: Optional[str] = None,
     cache_dir: Optional[Union[str, Path]] = None,
     load_for_training: bool = False,
-    llm_backbone_id = '/mnt/petrelfs/yangshuai1/rep/cogact_with_history/ckpt/Eagle2-2B'
+    llm_backbone_id = '/mnt/petrelfs/yangshuai1/rep/cogact_with_history/ckpt/Eagle2-2B',
+    stage = 'stage1',
 ) -> PrismaticVLM:
     """Loads a pretrained PrismaticVLM from either local disk or the HuggingFace Hub."""
     if os.path.isdir(model_id_or_path):
@@ -1109,6 +1151,7 @@ def load(
         processor = processor,
         token_size= vlm.config.llm_config.hidden_size,
         meta_token_ids = new_token_ids,
+        stage = stage
     )
 
     return vla
@@ -1120,6 +1163,7 @@ def load_vla(
     cache_dir: Optional[Union[str, Path]] = None,
     load_for_training: bool = False,
     model_type: str = "pretrained",
+    stage: str = "stage2",
     **kwargs,
 ) -> CogACT:
     """Loads a pretrained CogACT from either local disk or the HuggingFace Hub."""
@@ -1172,6 +1216,7 @@ def load_vla(
         checkpoint_pt,
         freeze_weights=not load_for_training,
         norm_stats = norm_stats,
+        stage = stage,
         **kwargs,
     )
 

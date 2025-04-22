@@ -17,7 +17,7 @@ from simpler_env.utils.metrics import (
 # Calculate metrics for each task
 
 
-def calc_pick_coke_can_stats(root_result_dir):
+def calc_pick_coke_can_stats(root_result_dir, google_var, google_matching):
     print("***Pick coke can results***")
     # If you use a new checkpoint, please update the real evaluation results here
     coke_can_real_success = {
@@ -165,6 +165,7 @@ def calc_pick_coke_can_stats(root_result_dir):
         avg_orientation_sim_variant_results[-1] = np.mean(avg_orientation_sim_variant_results[-1])
         avg_orientation_real_results[-1] = np.mean(avg_orientation_real_results[-1])
     print("avg_orientation_sim_variant_results", avg_orientation_sim_variant_results)
+    google_var.append(avg_orientation_sim_variant_results[0])
     # print("avg_orientation_real_results", avg_orientation_real_results)
     # print(
     #     "mean_maximum_rank_violation(avg_orientation_sim_variant_results, avg_orientation_real_results)",
@@ -250,6 +251,7 @@ def calc_pick_coke_can_stats(root_result_dir):
         "avg_orientation_sim_visual_matching_results",
         avg_orientation_sim_visual_matching_results,
     )
+    google_matching.append(avg_orientation_sim_visual_matching_results[0])
     # print("avg_orientation_real_results", avg_orientation_real_results)
     # print(
     #     "mean_maximum_rank_violation(avg_orientation_sim_visual_matching_results, avg_orientation_real_results)",
@@ -276,7 +278,7 @@ def calc_pick_coke_can_stats(root_result_dir):
         print()
 
 
-def calc_move_near_stats(root_result_dir):
+def calc_move_near_stats(root_result_dir, google_var, google_matching):
     print("***Move Near results***")
     # If you use a new checkpoint, please update the real evaluation results here
     move_near_real_success = {
@@ -347,6 +349,7 @@ def calc_move_near_stats(root_result_dir):
 
     print("-" * 20)
     print("sim variant avg success", move_near_sim_variant_success)
+    google_var.append(move_near_sim_variant_success[next(iter(move_near_sim_variant_success))])
     # print("real success", move_near_real_success)
     # print(
     #     "MMRV",
@@ -381,6 +384,7 @@ def calc_move_near_stats(root_result_dir):
 
 
     print("sim visual matching success", move_near_sim_visual_matching_success)
+    google_matching.append(move_near_sim_visual_matching_success[next(iter(move_near_sim_visual_matching_success))])
     # print("real success", move_near_real_success)
     # print(
     #     "visual matching MMRV",
@@ -407,7 +411,7 @@ def calc_move_near_stats(root_result_dir):
         print()
 
 
-def calc_drawer_stats(root_result_dir):
+def calc_drawer_stats(root_result_dir, google_var, google_matching):
     print("***Drawer results***")
     # If you use a new checkpoint, please update the real evaluation results here
     drawer_real_success = {
@@ -537,6 +541,7 @@ def calc_drawer_stats(root_result_dir):
         avg_sim_variant_results[-1] = np.mean(avg_sim_variant_results[-1])
         avg_real_results[-1] = np.mean(avg_real_results[-1])
     print("avg_sim_variant_results", avg_sim_variant_results)
+    google_var.append(avg_sim_variant_results[0])
     # print("avg_real_results", avg_real_results)
     # print(
     #     "mean_maximum_rank_violation(avg_sim_variant_results, avg_real_results)",
@@ -618,6 +623,7 @@ def calc_drawer_stats(root_result_dir):
         avg_sim_visual_matching_results[-1] = np.mean(avg_sim_visual_matching_results[-1])
         avg_real_results[-1] = np.mean(avg_real_results[-1])
     print("avg_sim_visual_matching_results", avg_sim_visual_matching_results)
+    google_matching.append(avg_sim_visual_matching_results[0])
     # print("avg_real_results", avg_real_results)
     # print(
     #     "mean_maximum_rank_violation(avg_sim_visual_matching_results, avg_real_results)",
@@ -638,7 +644,7 @@ def calc_drawer_stats(root_result_dir):
         print()
 
 
-def calc_long_horizon_apple_in_drawer_stats(root_result_dir):
+def calc_long_horizon_apple_in_drawer_stats(root_result_dir, google_var, google_matching):
     print("***Drawer results***")
     # If you use a new checkpoint, please update the real evaluation results here
     drawer_real_success = {
@@ -754,6 +760,7 @@ def calc_long_horizon_apple_in_drawer_stats(root_result_dir):
         avg_sim_variant_results[-1] = np.mean(avg_sim_variant_results[-1])
         avg_real_results[-1] = np.mean(avg_real_results[-1])
     print("avg_sim_variant_results", avg_sim_variant_results)
+    google_var.append(avg_sim_variant_results[0])
     # print("avg_real_results", avg_real_results)
     # print(
     #     "mean_maximum_rank_violation(avg_sim_variant_results, avg_real_results)",
@@ -835,6 +842,7 @@ def calc_long_horizon_apple_in_drawer_stats(root_result_dir):
         avg_sim_visual_matching_results[-1] = np.mean(avg_sim_visual_matching_results[-1])
         avg_real_results[-1] = np.mean(avg_real_results[-1])
     print("avg_sim_visual_matching_results", avg_sim_visual_matching_results)
+    google_matching.append(avg_sim_visual_matching_results[0])
     # print("avg_real_results", avg_real_results)
     # print(
     #     "mean_maximum_rank_violation(avg_sim_visual_matching_results, avg_real_results)",
@@ -855,7 +863,7 @@ def calc_long_horizon_apple_in_drawer_stats(root_result_dir):
         print()
 
 
-def calc_bridge_put_on_env_stats(root_result_dir):
+def calc_bridge_put_on_env_stats(root_result_dir, widowx_matching):
     print("***Bridge Put On Env results***")
     # If you use a new checkpoint, please update the real evaluation results here
     real_partial_success_dict = {
@@ -1007,6 +1015,7 @@ def calc_bridge_put_on_env_stats(root_result_dir):
         # )
 
         print("sim visual matching success", sim_visual_matching_success)
+        widowx_matching.append(sim_visual_matching_success[next(iter(sim_visual_matching_success))])
         # print("real success", real_success)
         # print(
         #     "visual matching MMRV",
@@ -1048,25 +1057,60 @@ CKPT_MAPPING = {
     "CogACT-Base": args.ckpt_mapping
 }
 
+google_var = []
+google_matching = []
+widowx_matching = []
+
 if 'perform_all' not in args.task:
     if args.task == "pick_coke_can":
-        calc_pick_coke_can_stats(args.log_dir_root)
+        calc_pick_coke_can_stats(args.log_dir_root,google_var,google_matching)
     elif args.task == "move_near":
-        calc_move_near_stats(args.log_dir_root)
+        calc_move_near_stats(args.log_dir_root,google_var,google_matching)
     elif args.task == "drawer":
-        calc_drawer_stats(args.log_dir_root)
+        calc_drawer_stats(args.log_dir_root,google_var,google_matching)
     elif args.task == "long_horizon_apple_in_drawer":
-        calc_long_horizon_apple_in_drawer_stats(args.log_dir_root)
+        calc_long_horizon_apple_in_drawer_stats(args.log_dir_root,google_var,google_matching)
     elif args.task == "bridge_put_on":
-        calc_bridge_put_on_env_stats(args.log_dir_root)
+        calc_bridge_put_on_env_stats(args.log_dir_root,widowx_matching)
     else:
         raise ValueError(f"Unknown task: {args.task}")
 else:
-    calc_pick_coke_can_stats(args.log_dir_root)
-    calc_move_near_stats(args.log_dir_root)
-    calc_drawer_stats(args.log_dir_root)
-    calc_long_horizon_apple_in_drawer_stats(args.log_dir_root)
-    calc_bridge_put_on_env_stats(args.log_dir_root)
+    calc_pick_coke_can_stats(args.log_dir_root,google_var,google_matching)
+    calc_move_near_stats(args.log_dir_root,google_var,google_matching)
+    calc_drawer_stats(args.log_dir_root,google_var,google_matching)
+    calc_long_horizon_apple_in_drawer_stats(args.log_dir_root,google_var,google_matching)
+    calc_bridge_put_on_env_stats(args.log_dir_root,widowx_matching)
+import math
+print()
+print('google_var:')
+for i in google_var:
+    if not math.isnan(i):
+        print(round(100*i,1))
+        print(round(100*i,1))
+    else:
+        print(i)
+        print(i)
+
+print()
+
+print('google_matching')
+for i in google_matching:
+    if not math.isnan(i):
+        print(round(100*i,1))
+        print(round(100*i,1))
+    else:
+        print(i)
+        print(i)
+print()
+
+print('widowx_matching')
+for i in widowx_matching:
+    if not math.isnan(i):
+        print(round(100*i,1))
+        print(round(100*i,1))
+    else:
+        print(i)
+        print(i)
 
 exit(0)
 

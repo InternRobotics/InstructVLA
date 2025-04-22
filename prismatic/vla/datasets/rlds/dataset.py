@@ -130,6 +130,48 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
+    reasoning_dataset_paths = [
+        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/bridge.json",
+        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/fractal.json"
+    ]
+    reasoning_dataset = {}
+    if "fractal" in name:
+        anno_index = 1
+    elif 'bridge' in name:
+        anno_index = 0
+    else:
+        raise ValueError(f"Couldn't find valid dataset annotation`")
+
+    with open(reasoning_dataset_paths[anno_index], "r") as f:
+        reasoning_dataset.update(json.load(f))
+
+    def make_tf_dict(raw_dict):
+        print("Building the reasoning dict...")
+        keys = []
+        values = []
+
+        for file_name in raw_dict.keys():
+            for episode_id in raw_dict[file_name].keys():
+
+                for i,move_primitive in enumerate(raw_dict[file_name][episode_id]["features"]["move_primitive"]):
+                    keys.append(file_name + "_" + str(episode_id) + "_" + str(i))
+                    # TODO: add alternative instruction here
+
+                    values.append(
+                        json.dumps(dict(
+                        move_primitive = move_primitive,
+                        caption = None,
+                        QA = None
+                    )))
+
+        print("Example reasoning:", keys[0], values[0])
+
+        return tf.lookup.StaticHashTable(tf.lookup.KeyValueTensorInitializer(keys, values), default_value=json.dumps(dict( move_primitive = None,
+                                                                                                                caption = None,
+                                                                                                                QA = None)))
+
+    reasoning_dataset = make_tf_dict(reasoning_dataset)
+
     def restructure(traj):
         # apply a standardization function, if provided
         if standardize_fn is not None:
@@ -180,12 +222,23 @@ def make_dataset_from_rlds(
                     f"Language key {language_key} has dtype {traj[language_key].dtype}, " "but it must be tf.string."
                 )
             task["language_instruction"] = traj.pop(language_key)
+        
+        file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+        episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
+
+        file_names = tf.repeat(file_name, traj_len)
+        episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+        indices = tf.as_string(tf.range(traj_len))
+        reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
 
         traj = {
             "observation": new_obs,
             "task": task,
             "action": tf.cast(traj["action"], tf.float32),
             "dataset_name": tf.repeat(name, traj_len),
+            "idx": traj['_traj_index'],
+            "frame_idx": traj['_frame_index'],
+            "reasonings": reasonings,
         }
 
         if absolute_action_mask is not None:
@@ -573,12 +626,13 @@ def make_interleaved_dataset(
     dataset: dl.DLataset = dl.DLataset.sample_from_datasets(datasets, sample_weights)
 
     # Validation =>> fix a single shuffle buffer of data and cache it in RAM; prevents gradual memory increase!
-    if not train:
+    if not train and shuffle_buffer_size != -1:
         dataset = dataset.take(shuffle_buffer_size).cache()
 
     # Shuffle the Dataset
     #   =>> IMPORTANT :: Shuffle AFTER .cache(), or else memory will still leak!
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    if shuffle_buffer_size != -1:
+        dataset = dataset.shuffle(shuffle_buffer_size)
 
     # Apply Frame Transforms
     overwatch.info("Applying frame transforms on dataset...")

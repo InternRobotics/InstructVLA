@@ -27,6 +27,7 @@ from prismatic.training.metrics import Metrics, VLAMetrics
 from prismatic.util import check_bloat16_supported
 from prismatic.util.batching_utils import SplitModalitySampler
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction, PaddedCollatorForLanguageModeling
+import time
 
 from vla import CogACT
   
@@ -103,6 +104,20 @@ class TrainingStrategy(ABC):
         if self.enable_mixed_precision_training:
             assert self.mixed_precision_dtype == torch.bfloat16, "Only BF16 mixed precision training is supported!"
             assert check_bloat16_supported(), "BFloat16 is not supported on this hardware; unset `mixed_precision`"
+        self.flow_t_max = 0.999
+        self.flow_beta_dist = torch.distributions.Beta(1.5, 1)
+        self.flow_sampling = "beta"
+    
+    
+    def sample_fm_time(self, bsz: int) -> torch.FloatTensor:
+        if self.flow_sampling == "uniform":  # uniform between 0 and 1
+            """https://github.com/gle-bellier/flow-matching/blob/main/Flow_Matching.ipynb"""
+            eps = 1e-5
+            t = (torch.rand(1) + torch.arange(bsz) / bsz) % (1 - eps)
+        elif self.flow_sampling == "beta":  # from pi0 paper
+            z = self.flow_beta_dist.sample((bsz,))
+            t = self.flow_t_max * (1 - z)  # flip and shift
+        return t
 
     @abstractmethod
     def save_checkpoint(
@@ -257,10 +272,13 @@ class TrainingStrategy(ABC):
         save_interval: int = 2500,
         save_full_model: bool = True,
         action_model: bool = True,
+        mm_dataset = None,
+        mm_collator = None,
+        sampling_type = None,
     ) -> None:
         """Run the VLA training loop for the given `dataset` and `collator`; log losses, action metrics to `metrics`."""
         assert isinstance(vla_dataset, IterableDataset), "VLA training expects an IterableDataset!"
-        #assert self.grad_accumulation_steps == 1, "VLA training does not support gradient accumulation!"
+        assert self.grad_accumulation_steps == 1, "VLA training does not support gradient accumulation!"
 
         # Create a DataLoader =>> Set `num_workers` to 0; RLDS loader handles parallelism!
         dataloader = DataLoader(
@@ -293,11 +311,15 @@ class TrainingStrategy(ABC):
             for train_idx, batch in enumerate(dataloader):
                 # Note that we'll unpack batch (and let AMP/FSDP do its thing) in the VLM.forward() call
                 #   => Basically, if we're using mixed precision (or not), autocast()/FSDP will move to device!
+                if isinstance(batch, tuple):
+                    batch, mm_batch = batch[0], batch[1]
+                else:
+                    mm_batch = None
                 with torch.autocast(
                     "cuda", dtype=self.mixed_precision_dtype, enabled=self.enable_mixed_precision_training
                 ):
                     if action_model:
-                        loss, _ = self.vlm(
+                        loss, loss_language = self.vlm(
                             input_ids=batch["input_ids"],
                             attention_mask=batch["attention_mask"],
                             actions=batch["actions"],
@@ -305,7 +327,12 @@ class TrainingStrategy(ABC):
                             action_masks=batch["action_masks"],
                             labels=batch["labels"],
                             output_hidden_states = True,
-                            per_device_batch_size = self.per_device_batch_size
+                            per_device_batch_size = self.per_device_batch_size,
+                            episode_idx = torch.tensor(batch['episode_idx']),
+                            system2_pixel_values = batch['system2_pixel_values'] if 'system2_pixel_values' in batch else None,
+                            sampling_type = sampling_type,
+                            t = self.sample_fm_time(batch["input_ids"].shape[0]),
+                            train_idx = train_idx
                         )
                     else:
                         # [Contract] self.vlm.forward() must automatically compute `loss` and return!
@@ -319,9 +346,38 @@ class TrainingStrategy(ABC):
 
                 # Commit Loss =>> Backward!
                 metrics.commit(loss=loss)
+                if loss_language is not None:
+                    metrics.commit(action_mm_loss=loss_language)
                 
                 normalized_loss = loss / self.grad_accumulation_steps
                 normalized_loss.backward()
+
+
+                self.clip_grad_norm()
+                # Optimizer & LR Scheduler Step
+                self.optimizer.step()
+                self.lr_scheduler.step()
+                self.optimizer.zero_grad()
+                
+                if mm_batch is not None:
+                    with torch.autocast(
+                        "cuda", dtype=self.mixed_precision_dtype, enabled=self.enable_mixed_precision_training
+                    ):
+                        mm_loss, _  = self.vlm(
+                            input_ids=mm_batch["input_ids"],
+                            attention_mask=mm_batch["attention_mask"],
+                            pixel_values=mm_batch["pixel_values"].squeeze(1),
+                            labels=mm_batch["labels"],
+                            image_flags=mm_batch["image_flags"],
+                            # forward_lm_head=True, # activate lm head to get logits
+                        )
+                            
+                    # Commit Loss =>> Backward!
+                    metrics.commit(mm_loss=mm_loss)
+                        
+                    normalized_mm_loss = mm_loss / self.grad_accumulation_steps
+                    normalized_mm_loss.backward()
+
 
                 # === Gradient Step ===
                 # Step =>> Only if Done w/ Gradient Accumulation

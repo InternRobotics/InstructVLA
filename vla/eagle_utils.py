@@ -55,6 +55,86 @@ from typing import Dict, List, Tuple, Union
 
 IGNORE_INDEX = -100
 
+
+# excellent function from https://github.com/huggingface/transformers/issues/21374#issuecomment-1412022237
+def extract_decoder_hidden_states(
+    generate_output_dict,
+    hidden_layer_idx=-1,
+):
+    """
+    Extracts the decoder hidden states representation from
+    GreedySearchEncoderDecoderOutput and BeamSearchEncoderDecoderOutput,
+    associated with the `sequences` output.
+    - generate_output_dict: output dict from the model.generate() method
+      you should add the following arguments to generate:
+        - output_hidden_states=True
+        - output_scores=True
+        - return_dict_in_generate=True
+    - hidden_layer_idx: index of the layer to extract the representation from (-1 == last one)
+    """
+    from transformers.generation.utils import GreedySearchDecoderOnlyOutput, \
+        BeamSearchDecoderOnlyOutput, \
+        GreedySearchEncoderDecoderOutput, \
+        BeamSearchEncoderDecoderOutput, \
+        BeamSampleDecoderOnlyOutput
+
+    greedy = any([isinstance(generate_output_dict, i) for i in [GreedySearchDecoderOnlyOutput,
+                                                                GreedySearchEncoderDecoderOutput]])
+    beamy = any([isinstance(generate_output_dict, i) for i in [BeamSearchDecoderOnlyOutput,
+                                                               BeamSearchEncoderDecoderOutput,
+                                                               BeamSampleDecoderOnlyOutput]])
+
+    if greedy:
+        # in greedy decoding, the beam_indices is not present, so we create one
+        # where the first beam is always selected
+        scores = generate_output_dict['scores']
+        device = generate_output_dict['sequences'].device
+        beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1)
+        beam_indices = beam_indices.expand(-1, len(scores)).to(device)
+    elif beamy:
+        if 'beam_indices' not in generate_output_dict:
+            raise RuntimeError(
+                "You should export the scores with output_scores=True when "
+                "calling extract_decoder_hidden_states with "
+                "BeamSearchEncoderDecoderOutput"
+            )
+        beam_indices = generate_output_dict['beam_indices'].clone()
+    else:
+        raise NotImplementedError(
+            "extract_decoder_hidden_states only works with "
+            "GreedySearch...Output and BeamSearch...Output "
+            "output types."
+        )
+    # handling of the target length and preparing the masking for tokens
+    # outside of that length
+    beam_indices_mask = beam_indices < 0
+    max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
+    beam_indices = beam_indices[:, :max_beam_length]
+    beam_indices_mask = beam_indices_mask[:, :max_beam_length]
+    beam_indices[beam_indices_mask] = 0
+    seqlen = generate_output_dict['sequences'].shape[1] - 1
+    # creating the output hidden_states representation in format:
+    # [bsz * beam_width ; seqlen ; featdim]
+    if "Encoder" in str(type(generate_output_dict)):
+        decoder_hidden_states = torch.stack([
+            generate_output_dict['decoder_hidden_states'][i][hidden_layer_idx][:, 0, :].index_select(
+                dim=0,
+                index=beam_indices[:, i]  # reordering using the beam_indices
+            )
+            for i in range(seqlen)
+        ]).transpose(0, 1)
+    else:
+        decoder_hidden_states = [
+            generate_output_dict['hidden_states'][i][hidden_layer_idx][:, 0, :].index_select(
+                dim=0,
+                index=beam_indices[:, i]  # reordering using the beam_indices
+            )
+            for i in range(seqlen)
+        ]
+        decoder_hidden_states = torch.stack([torch.zeros(decoder_hidden_states[0].shape).to(
+            "cuda")] + decoder_hidden_states).transpose(0, 1)
+    return decoder_hidden_states
+
 class SeparatorStyle(IntEnum):
     """Separator styles."""
 

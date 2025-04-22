@@ -112,8 +112,10 @@ class RLDSBatchTransform:
 
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
-
-        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name, actions=action, action_masks=action_mask)
+        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, 
+                    dataset_name=dataset_name, actions=action, action_masks=action_mask, 
+                    episode_idx=rlds_batch["idx"], frame_idx=rlds_batch['frame_idx'],
+                    reasonings=rlds_batch["reasonings"])
 
 
 class RLDSDataset(IterableDataset):

@@ -221,6 +221,9 @@ def train(cfg: TrainConfig) -> None:
     dist.barrier()
     # Create Train Strategy
     overwatch.info(f"Initializing Train Strategy `{cfg.train_strategy}`")
+
+    overwatch.info(f">>>>>>>>>>>>>> VLA is set to finetuning!!! <<<<<<<<<<<<<<<")
+    vla.do_pretraing = False
     
     train_strategy = get_train_strategy(
         train_strategy=cfg.train_strategy,

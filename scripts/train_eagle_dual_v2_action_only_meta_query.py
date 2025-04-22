@@ -35,7 +35,7 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
 from training import VLAMetrics, get_train_strategy
 from conf import VLAConfig, VLARegistry
-from vla.cogactvla_eagle_dual_sys_v2 import load, load_vla, get_vla_dataset_and_collator, CogACT
+from vla.cogactvla_eagle_dual_sys_v2_meta_query import load, load_vla, get_vla_dataset_and_collator, CogACT
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -90,6 +90,8 @@ class TrainConfig:
     action_model_type: str = 'DiT-B'                                # Action model type, chose from ['DiT-S', 'DiT-B', 'DiT-L']
     use_ema: bool = False                                           # EMA version of action model
     action_dim: int = 7                                             # Dimension of action space
+    use_mm: bool = True
+    stage: str = "stage1"
 
     def __post_init__(self) -> None:
         """Lift optimization parameters from `self.vla` for ease of use =>> validate on `expected_world_size`"""
@@ -164,9 +166,8 @@ def train(cfg: TrainConfig) -> None:
         # if cfg.is_resume:
         #     assert int(re.search("step-(.+?)-", cfg.pretrained_checkpoint.name).group(1)) == cfg.resume_step
         #     assert int(re.search("epoch-(.+?)-", cfg.pretrained_checkpoint.name).group(1)) == cfg.resume_epoch
-        overwatch.info("Loading VLA Checkpoint")
-        if cfg.use_ema:
-            overwatch.info("Loading EMA of Diffusion")
+        overwatch.info(f"Loading VLA {cfg.stage} Checkpoint")
+        
         vla = load_vla(cfg.pretrained_checkpoint, 
                         hf_token=hf_token, 
                         load_for_training=not cfg.debug, 
@@ -175,10 +176,11 @@ def train(cfg: TrainConfig) -> None:
                         future_action_window_size=cfg.future_action_window_size,
                         past_action_window_size=cfg.past_action_window_size,
                         use_ema=cfg.use_ema,
+                        stage=cfg.stage
                         )
 
     else:
-        vlm = load(cfg.vla.base_vlm, hf_token=hf_token, load_for_training=not cfg.debug)
+        vlm = load(cfg.vla.base_vlm, hf_token=hf_token, load_for_training=not cfg.debug, stage=cfg.stage)
         overwatch.info("Creating VLA from Base VLM")
         if cfg.use_ema:
             overwatch.info("Creating EMA for Diffusion")
@@ -197,6 +199,16 @@ def train(cfg: TrainConfig) -> None:
     overwatch.info(
         f"# Parameters (in millions): {num_params / 10**6:.3f} Total, {num_trainable_params / 10**6:.3f} Trainable"
     )
+    if cfg.use_mm:
+        from mm_dataset.data_utils import LazySupervisedDataset, DataCollatorForSupervisedDataset
+        mm_dataset = LazySupervisedDataset(tokenizer=vla.tokenizer,
+                                            processor=vla.processor,
+                                            data_path='bunny_dataset/finetune/bunny_llava_allava_2m.json',
+                                            )
+        mm_collator=DataCollatorForSupervisedDataset(tokenizer=vla.tokenizer)
+    else:
+        mm_dataset = None
+        mm_collator = None
 
     overwatch.info(f"Creating VLA Open-X Dataset with Mixture `{cfg.vla.data_mix}`")
     vla_dataset, _, collator = get_vla_dataset_and_collator(
@@ -211,6 +223,8 @@ def train(cfg: TrainConfig) -> None:
         load_all_data_for_training=cfg.load_all_data_for_training,
         future_action_window_size=cfg.future_action_window_size,
         past_action_window_size=cfg.past_action_window_size,
+        mm_dataset=mm_dataset,
+        mm_collator=mm_collator,
     )
 
     # Save dataset statistics for de-normalization at inference time
@@ -221,8 +235,6 @@ def train(cfg: TrainConfig) -> None:
     dist.barrier()
     # Create Train Strategy
     overwatch.info(f"Initializing Train Strategy `{cfg.train_strategy}`")
-    overwatch.info(f">>>>>>>>>>>>>> VLA is set to pretraining!!! <<<<<<<<<<<<<<<")
-    vla.do_pretraing = True
 
     train_strategy = get_train_strategy(
         train_strategy=cfg.train_strategy,
@@ -263,7 +275,7 @@ def train(cfg: TrainConfig) -> None:
 
     # Run VLA Training
     overwatch.info("Starting VLA Training Loop")
-    
+
     train_strategy.run_vla_training(
         vla_dataset,
         collator,

@@ -16,9 +16,10 @@ from transformers import AutoModelForVision2Seq, AutoProcessor
 
 
 from vla import CogACT
-# from vla import load_vla
-from vla.cogactvla_eagle_dual_sys_v2 import load_vla
+from vla import load_vla
 from sim_cogact.adaptive_ensemble import AdaptiveEnsembler
+from copy import deepcopy
+import pickle
 
 class CogACTInference:
     def __init__(

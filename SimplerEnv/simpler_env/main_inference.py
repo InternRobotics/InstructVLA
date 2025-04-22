@@ -3,6 +3,7 @@ import sys
 parent_dir = os.path.dirname(os.getcwd())
 sys.path.insert(0, parent_dir)
 sys.path.insert(0, os.getcwd())
+
 import numpy as np
 import tensorflow as tf
 
@@ -33,7 +34,6 @@ if __name__ == "__main__":
         )
 
     # policy model creation; update this if you are using a new policy model
-    assert args.policy_model == "cogact"
     if args.policy_model == "rt1":
         assert args.ckpt_path is not None
         # model = RT1Inference(
@@ -58,14 +58,36 @@ if __name__ == "__main__":
         #         action_scale=args.action_scale,
         #     )
     elif args.policy_model == "cogact":
-        from simpler_env.policies.sim_cogact import CogACTInference
+        if "meta" in args.ckpt_path:
+            from simpler_env.policies.sim_cogact import MetaCogACTInference
+            assert args.ckpt_path is not None
+            model = MetaCogACTInference(
+                saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
+                policy_setup=args.policy_setup,
+                action_scale=args.action_scale,
+                action_model_type='DiT-B',
+                cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
+            )
+        else:
+            raise NotImplementedError('The code is only varified using meta token method.')
+            from simpler_env.policies.sim_cogact import CogACTInference
+            assert args.ckpt_path is not None
+            model = CogACTInference(
+                saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
+                policy_setup=args.policy_setup,
+                action_scale=args.action_scale,
+                action_model_type='DiT-B',
+                cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
+            )
+    elif args.policy_model == "openvla":
         assert args.ckpt_path is not None
-        model = CogACTInference(
-            saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
+        from simpler_env.policies.openvla.openvla_model import OpenVLAInference
+        sys.path.insert(0, '/mnt/petrelfs/yangshuai1/rep/openvla-mini/SimplerEnv')
+        sys.path.insert(0, '/mnt/petrelfs/yangshuai1/rep/openvla-mini')
+        model = OpenVLAInference(
+            saved_model_path=args.ckpt_path,
             policy_setup=args.policy_setup,
             action_scale=args.action_scale,
-            action_model_type='DiT-B',
-            cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
         )
     else:
         raise NotImplementedError()

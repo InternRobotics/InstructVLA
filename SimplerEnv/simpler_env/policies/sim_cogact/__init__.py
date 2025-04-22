@@ -1,2 +1,3 @@
 from .cogact_policy import CogACTInference
+from .cogact_policy_meta import CogACTInference as MetaCogACTInference
 from .adaptive_ensemble import AdaptiveEnsembler

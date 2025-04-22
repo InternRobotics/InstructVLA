@@ -7,7 +7,7 @@ clear control flow.
 
 import os
 # LOCAL_OXE='/mnt/hwfile/OpenRobotLab/robot_data/open_x_embodiment_origin_re'
-LOCAL_OXE='/mnt/hwfile/OpenRobotLab/robot_data/OXE_openvla'
+LOCAL_OXE='/mnt/hwfile/OpenRobotLab/robot_data/cache'
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
