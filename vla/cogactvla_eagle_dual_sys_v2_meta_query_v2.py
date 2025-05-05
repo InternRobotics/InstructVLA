@@ -38,7 +38,7 @@ import time
 import timm
 import random
 
-from peft import get_peft_model, LoraConfig, TaskType, XLoraConfig
+from peft import get_peft_model, LoraConfig, TaskType
 import torch.nn.functional as F
 
 import math
@@ -66,7 +66,8 @@ overwatch = initialize_overwatch(__name__)
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
 IGNORE_INDEX = -100
 
-DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant. Please help me control the robot."
+# This system message is JUST a placeholder
+DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant."
 
 
 def fixed_cross_entropy(
@@ -281,11 +282,9 @@ class ActionWorldModel(nn.Module):
         
         if VQTokenizer is None or VideoGPT is None:
             print("Initialize world model from config (no pretrained weights)")
-            # self.VQTokenizer = CompressiveVQModel.from_pretrained(world_model, subfolder='tokenizer', low_cpu_mem_usage=False)
             transformer_config = AutoConfig.from_pretrained(world_model, subfolder='transformer')
             self.VideoGPT = AutoModelForCausalLM.from_config(transformer_config, attn_implementation="eager")
         else:
-            # self.VQTokenizer = VQTokenizer
             self.VideoGPT = VideoGPT
 
         # remove unused parameters
@@ -341,6 +340,9 @@ class ActionWorldModel(nn.Module):
             pixel_values = pixel_values['dino']
         
         visual_embed = self.film_vision_model(pixel_values, cognition_features)
+        # to ablate dino
+        # visual_embed_zeros = torch.zeros_like(visual_embed, device=visual_embed.device, dtype=torch.float32)
+        # visual_embed = visual_embed_zeros
 
         visual_feature = self.visual_projector(visual_embed)
         cognition_features = self.cog_projector(cognition_features)
@@ -543,6 +545,10 @@ class CogACT(nn.Module):
                 self.vlm.language_model.base_model.model.lm_head.weight[token_id].requires_grad = True
         elif stage == "stage2":
             overwatch.info("Train the model in stage 2 with X-LoRA")
+
+            # We defaultly use the dense method, the inital scale of each adapter is 1/num_adapter
+            # The language expert is initaled from zero
+            from peft import XLoraConfig
             
             lora_config = XLoraConfig(
                 task_type="CAUSAL_LM",
@@ -551,7 +557,7 @@ class CogACT(nn.Module):
                 xlora_size=128,
                 adapters={
                     "0": "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/outputs/head_balation/sys12_meta_query_action_only_sync_pretraining_v2_query_64_mlp_lora--image_aug/checkpoints/empty",
-                    "1": "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/outputs/head_balation/sys12_meta_query_action_only_sync_pretraining_v2_query_64_mlp_lora--image_aug/checkpoints/step-036000-epoch-09_lora_only",
+                    "1": "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/outputs/head_balation/sys12_meta_query_action_only_sync_pretraining_v2_query_64_mlp_lora--image_aug/checkpoints/step-034500-epoch-09_lora_only",
                 },
             )
             self.vlm.language_model = get_peft_model(self.vlm.language_model, lora_config)
@@ -564,6 +570,7 @@ class CogACT(nn.Module):
             for name, param in self.vlm.language_model.base_model.lora_model.named_parameters():
                 if "lora_" in name:
                     param.requires_grad = True
+        self.stage = stage
 
         self.vlm.language_model.print_trainable_parameters()
 
@@ -592,6 +599,28 @@ class CogACT(nn.Module):
         stop_words_ids = [self.tokenizer(stop_word, return_tensors='pt', add_special_tokens=False)['input_ids'].squeeze() for stop_word in stop_words]
         self.stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stop_words_ids, tokenizer = self.tokenizer)])
 
+        self._fix_system1 = False
+
+        # for inference
+        self.last_response = None
+        self.run_index = 0
+        self.latent = None
+    
+    @property
+    def fix_system1(self):
+        return self._fix_system1
+
+    @fix_system1.setter
+    def fix_system1(self, value: bool):
+        overwatch.warning(f"fix_system1 is being updated to: {value}")
+        if value:
+            for name, param in self.action_model.named_parameters():
+                param.requires_grad = False
+        else:
+            for name, param in self.action_model.named_parameters():
+                param.requires_grad = True
+
+        self._fix_system1 = value
 
     @property
     def llm_backbone(self):
@@ -603,6 +632,14 @@ class CogACT(nn.Module):
     
     def freeze_backbones(self, stage):
         self.vlm.freeze_backbones(stage)
+    
+    @torch.inference_mode()
+    def chat(self, *args, **kwargs):
+        # chat method from eagle vlm
+        autocast_dtype = torch.bfloat16
+        with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
+            ret = self.vlm.chat(*args, **kwargs)
+        return ret
 
     def forward(
         self,
@@ -789,6 +826,7 @@ class CogACT(nn.Module):
         use_ema: bool = False,
         norm_stats = None,
         stage = "stage1",
+        num_of_meta_query = 64,
         **kwargs,
     ) -> CogACT:
 
@@ -810,7 +848,8 @@ class CogACT(nn.Module):
                                                   use_fast=True,
                                                   trust_remote_code=True)
 
-        new_tokens = ['<new_token_{}>'.format(i) for i in range(64)]  # Create 256 new token names
+        new_tokens = ['<new_token_{}>'.format(i) for i in range(num_of_meta_query)]  # Create 256 new token names
+        overwatch.info(f"add {len(new_tokens)} bridge tokens")
         tokenizer.add_tokens(new_tokens)  # Add them to the tokenizer
         tokenizer.new_tokens = new_tokens
         processor.tokenizer = tokenizer
@@ -880,7 +919,8 @@ class CogACT(nn.Module):
         num_ddim_steps: int = 5,
         cognition_features_history = None,
         num_cognition_features_history = 0,
-        use_generate = False,
+        use_generate = True,
+        cache_latent = False,
         **kwargs: str
     ) -> np.ndarray:
         """
@@ -902,53 +942,58 @@ class CogACT(nn.Module):
         pixel_values = None
 
         # Prepare Inputs
-        if use_generate:
+        if use_generate and self.stage=="stage2":
+            if self.last_response is None or self.run_index % 20 == 0:
+                prompt = [
+                    {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                    {
+                        "role": "user",
+                        "content": f"What action should the robot take to {instruction}? First answer my question.",
+                        "image": [{'np_array': np.asarray(image)}],
+                    },
+                    {
+                        "role": "assistant", 
+                        "content": ""
+                    }
+                ]
+                inputs = self.processor.prepare_input({"prompt": prompt})
+                input_ids = inputs['input_ids'].to(self.vlm.device)
+                pixel_values = inputs['pixel_values']
+
+                pixel_values = pixel_values.to(self.vlm.device, dtype=autocast_dtype)
+                
+                with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
+                    attention_mask = input_ids.ne(-10)
+                    output: CausalLMOutputWithPast = self.vlm.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        pixel_values=pixel_values,
+                        max_length=1024,
+                        # fast_loss_cal=False,
+                        output_hidden_states=False,
+                        return_dict_in_generate=False,
+                        stopping_criteria=self.stopping_criteria # to accelerate primitive
+                    )
+
+                # Extract cognition feature
+                # primitive = self.tokenizer.decode(output[0]).replace("<new_token_0>","")
+                # print(primitive)
+                response = self.tokenizer.decode(output[0]).replace("<new_token_0>","")
+                print(response)
+                self.last_response = response
+            else:
+                response = self.last_response
 
             prompt = [
                 {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
                 {
                     "role": "user",
-                    "content": f"What action should the robot take to {instruction}? Give both move primitive and action.",
+                    "content": f"What action should the robot take to {instruction}? First answer my question.",
                     "image": [{'np_array': np.asarray(image)}],
                 },
                 {
                     "role": "assistant", 
-                    "content": "".join(self.processor.tokenizer.new_tokens)
-                }
-            ]
-            inputs = self.processor.prepare_input({"prompt": prompt})
-            input_ids = inputs['input_ids'].to(self.vlm.device)
-            pixel_values = inputs['pixel_values']
-
-            pixel_values = pixel_values.to(self.vlm.device, dtype=autocast_dtype)
-            
-            with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
-                attention_mask = input_ids.ne(-10)
-                output: CausalLMOutputWithPast = self.vlm.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    pixel_values=pixel_values,
-                    max_length=1024,
-                    # fast_loss_cal=False,
-                    output_hidden_states=False,
-                    return_dict_in_generate=False,
-                    stopping_criteria=self.stopping_criteria
-                )
-
-            # Extract cognition feature
-            primitive = self.tokenizer.decode(output[0]).replace("<new_token_0>","")
-            print(primitive)
-
-            prompt = [
-                {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                {
-                    "role": "user",
-                    "content": f"What action should the robot take to {instruction}? Give both move primitive and action.",
-                    "image": [{'np_array': np.asarray(image)}],
-                },
-                {
-                    "role": "assistant", 
-                    "content": primitive +"".join(self.processor.tokenizer.new_tokens)
+                    "content": response + " " + "".join(self.processor.tokenizer.new_tokens)
                 }
             ]
         else:
@@ -1011,7 +1056,7 @@ class CogACT(nn.Module):
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
             normalized_actions,
         )
-
+        self.run_index += 1
         return actions, normalized_actions, meta_feature
 
     @staticmethod
@@ -1059,6 +1104,20 @@ class RLDSBatchTransform:
     base_tokenizer: PreTrainedTokenizerBase
     processor: AutoProcessor
     image_processor: AutoProcessor
+    stage: str = "stage1"
+    disable_instruction: bool = False
+
+    caption_prompts = [
+        "Describe what’s on the table. Don’t mention the robot arm.",
+        "What objects are in the scene? Ignore the robot arm.",
+        "Tell me what you see on the table, not the robot.",
+        "Describe the items and their positions, but skip the robot.",
+        "Look at the table and describe it. Don’t include the arm.",
+        "Only talk about the objects, not the machine.",
+        "Give a short description of the scene, without the robot.",
+        "Describe the setup on the table. Leave out the robotic arm.",
+        "Focus on the objects and environment. Ignore the robot.",
+    ]
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
@@ -1084,25 +1143,125 @@ class RLDSBatchTransform:
         move_primitive = anno["move_primitive"]
         # tokenizer = self.processor.tokenizer
         for i in img:
-            if random.random() < 0.2:
-                action_prompt = f"What action should the robot take to {lang}? Give both move primitive and action."
-                assistant_content = f"{move_primitive} " + "".join(self.processor.tokenizer.new_tokens)
-            else:
-                action_prompt = f"What action should the robot take to {lang}?"
-                assistant_content = "".join(self.processor.tokenizer.new_tokens)
+            if self.stage == 'stage1' or self.disable_instruction:
+                if random.random() < 0.2:
+                    action_prompt = f"What action should the robot take to {lang}? Give both move primitive and action."
+                    assistant_content = f"{move_primitive} " + "".join(self.processor.tokenizer.new_tokens)
+                else:
+                    action_prompt = f"What action should the robot take to {lang}?"
+                    assistant_content = "".join(self.processor.tokenizer.new_tokens)
 
-            prompt = [
-                {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                {
-                    "role": "user",
-                    "content": action_prompt,
-                    "image": [{'np_array': i}],
-                },
-                {
-                    "role": "assistant", 
-                    "content": assistant_content
-                }
-            ]
+                prompt = [
+                    {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                    {
+                        "role": "user",
+                        "content": action_prompt,
+                        "image": [{'np_array': i}],
+                    },
+                    {
+                        "role": "assistant", 
+                        "content": assistant_content
+                    }
+                ]
+            elif self.stage == 'stage2':
+
+                instruction_prob = random.random()
+                primitive_prob = random.random()
+
+                has_QA_or_cap = False
+                has_CC = False
+                has_CR = False
+
+                if anno['alt_instruction'] is not None:
+                    has_QA_or_cap = True
+                    if  "CR" in anno['alt_instruction'] and len(anno['alt_instruction']["CR"]): has_CR=True
+                    if  "CC" in anno['alt_instruction'] and len(anno['alt_instruction']["CC"]): has_CC=True
+
+                try:
+                    if 0.4 <= instruction_prob < 0.6 and has_QA_or_cap:
+                        all_optional_QA = [ 
+                            dict(
+                                question = random.sample(self.caption_prompts, 1)[0],
+                                answer = anno['alt_instruction']['Caption']
+                            )
+                        ] + anno['alt_instruction']['QA']
+                        curr_QA = random.sample(all_optional_QA, 1)[0]
+
+                        prompt = [
+                            {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                            {
+                                "role": "user",
+                                "content": curr_QA['question'],
+                                "image": [{'np_array': i}],
+                            },
+                            {
+                                "role": "assistant", 
+                                "content": curr_QA["answer"]
+                            },
+                            {
+                                "role": "user",
+                                "content": f"What action should the robot take to {lang}?",
+                            },
+                            {
+                                "role": "assistant", 
+                                "content": "".join(self.processor.tokenizer.new_tokens)
+                            },
+                        ]
+
+                    elif 0.6 <= instruction_prob < 0.8 and has_CC:
+                        curr_QA = random.sample(anno['alt_instruction']["CC"], 1)[0]
+                        prompt = [
+                            {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                            {
+                                "role": "user",
+                                "content": f"What action should the robot take to {curr_QA['question']}? First answer my question.",
+                                "image": [{'np_array': i}],
+                            },
+                            {
+                                "role": "assistant", 
+                                "content": curr_QA["answer"] + " " + "".join(self.processor.tokenizer.new_tokens)
+                            }
+                        ]
+
+                    elif 0.8 <= instruction_prob and has_CR:
+                        curr_QA = random.sample(anno['alt_instruction']["CR"], 1)[0]
+                        prompt = [
+                            {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                            {
+                                "role": "user",
+                                "content": f"What action should the robot take to {curr_QA['question']}? First answer my question.",
+                                "image": [{'np_array': i}],
+                            },
+                            {
+                                "role": "assistant", 
+                                "content": curr_QA["answer"] + " " + "".join(self.processor.tokenizer.new_tokens)
+                            }
+                        ]
+                    else:
+                        raise ValueError()
+
+                except Exception as e:
+                    if primitive_prob < 0.2:
+                        action_prompt = f"What action should the robot take to {lang}? Give both move primitive and action."
+                        assistant_content = f"{move_primitive} " + "".join(self.processor.tokenizer.new_tokens)
+                    else:
+                        action_prompt = f"What action should the robot take to {lang}?"
+                        assistant_content = "".join(self.processor.tokenizer.new_tokens)
+
+                    prompt = [
+                        {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                        {
+                            "role": "user",
+                            "content": action_prompt,
+                            "image": [{'np_array': i}],
+                        },
+                        {
+                            "role": "assistant", 
+                            "content": assistant_content
+                        }
+                    ]
+            else:
+                raise NotImplementedError(f'which stage ???')
 
             inputs = self.processor.preprocess_inputs_and_labels({"prompt": prompt})
 
@@ -1221,6 +1380,8 @@ def get_vla_dataset_and_collator(
     base_action_tokenizer: PreTrainedTokenizerBase = None,
     mm_dataset = None,
     mm_collator = None,
+    stage = "stage1",
+    disable_instruction = False,
 ) -> Tuple[Dataset, ActionTokenizer, PaddedCollatorForActionPrediction]:
     """Initialize RLDS Dataset (wraps TFDS), ActionTokenizer, and initialize transform/collation functions."""
     if base_action_tokenizer is None:
@@ -1249,7 +1410,7 @@ def get_vla_dataset_and_collator(
     mm_iter = cycle(mm_iter) if mm_iter is not None else None # make it infinite
 
     batch_transform = RLDSBatchTransform(
-        action_tokenizer, tokenizer, processor, image_processor
+        action_tokenizer, tokenizer, processor, image_processor, stage, disable_instruction
     )
     collator = PaddedCollatorForActionPrediction(
         tokenizer.model_max_length, tokenizer.pad_token_id, padding_side=padding_side, mm_dataloader = mm_iter
@@ -1281,6 +1442,7 @@ def load(
     load_for_training: bool = False,
     llm_backbone_id = '/mnt/petrelfs/yangshuai1/rep/cogact_with_history/ckpt/Eagle2-2B',
     stage = 'stage1',
+    num_of_meta_query = 64,
 ) -> PrismaticVLM:
     """Loads a pretrained PrismaticVLM from either local disk or the HuggingFace Hub."""
     if os.path.isdir(model_id_or_path):
@@ -1307,7 +1469,8 @@ def load(
         trust_remote_code=True
         )
 
-    new_tokens = ['<new_token_{}>'.format(i) for i in range(64)]  # Create 256 new token names
+    new_tokens = ['<new_token_{}>'.format(i) for i in range(num_of_meta_query)]  # Create 256 new token names
+    overwatch.info(f"add {len(new_tokens)} bridge tokens")
     tokenizer.add_tokens(new_tokens)  # Add them to the tokenizer
     tokenizer.new_tokens = new_tokens
     processor.tokenizer = tokenizer
@@ -1389,11 +1552,28 @@ def load_vla(
     # Load VLA Config (and corresponding base VLM `ModelConfig`) from `config.json`
     with open(dataset_statistics_json, "r") as f:
         norm_stats = json.load(f)
+    with open(config_json, "r") as f:
+        config = json.load(f)
+    num_of_meta_query, num_of_meta_query_from_config = None, None
+    if 'num_of_meta_query' in kwargs:
+        num_of_meta_query = kwargs.pop("num_of_meta_query")
+    if 'num_of_meta_query' in config:
+        num_of_meta_query_from_config = config.pop("num_of_meta_query")
 
+    if num_of_meta_query is not None and num_of_meta_query_from_config is not None:
+        assert num_of_meta_query == num_of_meta_query_from_config, f'you need {num_of_meta_query} meta queries, but the checkpoint is trained with {num_of_meta_query} meta queries.'
+    elif num_of_meta_query is None and num_of_meta_query_from_config is None:
+        num_of_meta_query = 64
+        overwatch.info(f"not specify the number of meta query, the default value is 64 !!")
+
+    if num_of_meta_query_from_config is not None:
+        num_of_meta_query = num_of_meta_query_from_config
+    
     vla = CogACT.from_pretrained(
         checkpoint_pt,
         freeze_weights=not load_for_training,
         norm_stats = norm_stats,
+        num_of_meta_query=num_of_meta_query,
         **kwargs,
     )
 
