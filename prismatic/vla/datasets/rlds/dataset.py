@@ -131,8 +131,9 @@ def make_dataset_from_rlds(
         REQUIRED_KEYS.add(language_key)
 
     reasoning_dataset_paths = [
-        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/bridge.json",
-        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/fractal.json"
+        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/bridge_merged.json",
+        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/fractal.json",
+        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data_pipeline/bin_classification/output.json"
     ]
     reasoning_dataset = {}
     if "fractal" in name:
@@ -140,7 +141,7 @@ def make_dataset_from_rlds(
     elif 'bridge' in name:
         anno_index = 0
     else:
-        raise ValueError(f"Couldn't find valid dataset annotation`")
+        anno_index = -1
 
     with open(reasoning_dataset_paths[anno_index], "r") as f:
         reasoning_dataset.update(json.load(f))
@@ -149,9 +150,12 @@ def make_dataset_from_rlds(
         print("Building the reasoning dict...")
         keys = []
         values = []
+        instruct_cnt = 0
 
         for file_name in raw_dict.keys():
             for episode_id in raw_dict[file_name].keys():
+                has_instruct = "alt_instruction" in raw_dict[file_name][episode_id]
+                instruct_cnt += 1 if has_instruct else 0
 
                 for i,move_primitive in enumerate(raw_dict[file_name][episode_id]["features"]["move_primitive"]):
                     keys.append(file_name + "_" + str(episode_id) + "_" + str(i))
@@ -160,15 +164,16 @@ def make_dataset_from_rlds(
                     values.append(
                         json.dumps(dict(
                         move_primitive = move_primitive,
-                        caption = None,
-                        QA = None
+                        alt_instruction = raw_dict[file_name][episode_id]["alt_instruction"] if has_instruct else None
                     )))
+                instruct_cnt += 1 if has_instruct else 0
 
         print("Example reasoning:", keys[0], values[0])
+        print(f"total instructions {instruct_cnt}")
 
-        return tf.lookup.StaticHashTable(tf.lookup.KeyValueTensorInitializer(keys, values), default_value=json.dumps(dict( move_primitive = None,
-                                                                                                                caption = None,
-                                                                                                                QA = None)))
+        default_value = json.dumps(dict(move_primitive = None, alt_instruction = None))
+
+        return tf.lookup.StaticHashTable(tf.lookup.KeyValueTensorInitializer(keys, values), default_value=default_value)
 
     reasoning_dataset = make_tf_dict(reasoning_dataset)
 

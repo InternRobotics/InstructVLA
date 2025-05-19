@@ -755,33 +755,12 @@ class CogACT(nn.Module):
             # do batch sample
             # k = 2 # number of samples 
             t =  t.repeat(self.past_action_window_size + 1)
-            if sampling_type is None:
-                loss = self.action_model( cognition_features = repeated_cognition_features,
-                            pixel_values = dict(dino = system2_pixel_values),
-                            actions = actions_future,
-                            t = t,
-                        )
-            else:
-                B = per_device_batch_size
-                W = self.past_action_window_size + 1
-
-                sampled_indices = []
-                if sampling_type == 'first':
-                    for b in range(B):
-                        base = b * W
-                        sampled_indices.append(base + torch.ones(1, dtype=torch.long, device=repeated_cognition_features.device))
-                elif sampling_type == 'random':
-                    for b in range(B):
-                        base = b * W
-                        idx = torch.randperm(W, device=repeated_cognition_features.device)[:k]
-                        sampled_indices.append(base + idx)
-                
-                sampled_indices = torch.cat(sampled_indices, dim=0)
-                loss = self.action_model( cognition_features = repeated_cognition_features[sampled_indices],
-                    pixel_values = dict(dino = system2_pixel_values[sampled_indices]),
-                    actions = actions_future[sampled_indices],
-                    t = t[sampled_indices],
-                )
+            
+            loss = self.action_model( cognition_features = repeated_cognition_features,
+                        pixel_values = dict(dino = system2_pixel_values),
+                        actions = actions_future,
+                        t = t,
+                    )
 
             return loss + output.loss, output.loss
 
@@ -979,7 +958,7 @@ class CogACT(nn.Module):
                 # primitive = self.tokenizer.decode(output[0]).replace("<new_token_0>","")
                 # print(primitive)
                 response = self.tokenizer.decode(output[0]).replace("<new_token_0>","")
-                print(response)
+                print("!!!!!!!!!!!!!!!! =============== >" + response)
                 self.last_response = response
             else:
                 response = self.last_response
@@ -1014,25 +993,29 @@ class CogACT(nn.Module):
         if pixel_values is None:
             # Preprocess Image
             pixel_values = inputs['pixel_values']
-            pixel_values = pixel_values.to(self.vlm.device)
+            pixel_values = pixel_values.to(self.vlm.device, dtype=autocast_dtype)
 
         # Generate cognition feature through vlm
-        with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
-            attention_mask = input_ids.ne(-10)
-            output: CausalLMOutputWithPast = self.vlm(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                image_flags=torch.ones((input_ids.shape[0],1)).to( device=input_ids.device),
-                past_key_values=None,
-                use_cache=None,
-                output_attentions=None,
-                output_hidden_states=True,
-                return_dict=None,
-            )
+        if cache_latent is False or (cache_latent is True and (self.run_index % 2 == 0 or self.latent is None)):
+            with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
+                attention_mask = input_ids.ne(-10)
+                output: CausalLMOutputWithPast = self.vlm(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    pixel_values=pixel_values,
+                    image_flags=torch.ones((input_ids.shape[0],1)).to( device=input_ids.device),
+                    past_key_values=None,
+                    use_cache=None,
+                    output_attentions=None,
+                    output_hidden_states=True,
+                    return_dict=None,
+                )
 
-        # Extract cognition feature
-        last_hidden_states = output.hidden_states[-1]
+            # Extract cognition feature
+            last_hidden_states = output.hidden_states[-1]
+            self.latent = last_hidden_states
+        else:
+            last_hidden_states = self.latent
             
         meta_feature_mask = (input_ids >= self.min_meta_token) & (input_ids <= self.max_meta_token)
         meta_feature = last_hidden_states[torch.where(meta_feature_mask==1)].view(meta_feature_mask.size(0),-1 , last_hidden_states.shape[-1])
@@ -1043,7 +1026,7 @@ class CogACT(nn.Module):
         samples = self.action_model.sampling(   cognition_features = meta_feature,
                                                 pixel_values = sys1_pixel_values,
                                                 )
-        normalized_actions = samples[0].cpu().numpy()
+        normalized_actions = samples[0].float().cpu().numpy()
 
         # Un-normalize Actions        
         action_norm_stats = self.get_action_stats(unnorm_key)
@@ -1144,7 +1127,7 @@ class RLDSBatchTransform:
         # tokenizer = self.processor.tokenizer
         for i in img:
             if self.stage == 'stage1' or self.disable_instruction:
-                if random.random() < 0.2:
+                if random.random() < 0.2 and move_primitive is not None:
                     action_prompt = f"What action should the robot take to {lang}? Give both move primitive and action."
                     assistant_content = f"{move_primitive} " + "".join(self.processor.tokenizer.new_tokens)
                 else:
