@@ -62,9 +62,20 @@
 
 ## 🔗 Citation <a name="citation"></a>
 
-<!-- If you find our work helpful, please cite: -->
+If you find our work helpful, please cite:
 
 ```bibtex
+
+@misc{yang2025instructvlavisionlanguageactioninstructiontuning,
+      title={InstructVLA: Vision-Language-Action Instruction Tuning from Understanding to Manipulation}, 
+      author={Shuai Yang and Hao Li and Yilun Chen and Bin Wang and Yang Tian and Tai Wang and Hanqing Wang and Feng Zhao and Yiyi Liao and Jiangmiao Pang},
+      year={2025},
+      eprint={2507.17520},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2507.17520}, 
+}
+
 @misc{2506.19816,
   Author = {Hao Li and Shuai Yang and Yilun Chen and Yang Tian and Xiaoda Yang and Xinyi Chen and Hanqing Wang and Tai Wang and Feng Zhao and Dahua Lin and Jiangmiao Pang},
   Title = {CronusVLA: Transferring Latent Motion Across Time for Multi-Frame Prediction in Manipulation},
