@@ -76,10 +76,13 @@ If you find our work helpful, please cite:
       url={https://arxiv.org/abs/2507.17520}, 
 }
 
-@misc{2506.19816,
-  Author = {Hao Li and Shuai Yang and Yilun Chen and Yang Tian and Xiaoda Yang and Xinyi Chen and Hanqing Wang and Tai Wang and Feng Zhao and Dahua Lin and Jiangmiao Pang},
-  Title = {CronusVLA: Transferring Latent Motion Across Time for Multi-Frame Prediction in Manipulation},
-  Year = {2025},
-  Eprint = {arXiv:2506.19816},
-  }
+@misc{li2025cronusvlatransferringlatentmotion,
+      title={CronusVLA: Transferring Latent Motion Across Time for Multi-Frame Prediction in Manipulation}, 
+      author={Hao Li and Shuai Yang and Yilun Chen and Yang Tian and Xiaoda Yang and Xinyi Chen and Hanqing Wang and Tai Wang and Feng Zhao and Dahua Lin and Jiangmiao Pang},
+      year={2025},
+      eprint={2506.19816},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2506.19816}, 
+}
 ```
