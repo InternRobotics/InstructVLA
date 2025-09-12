@@ -35,7 +35,7 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
 from training import VLAMetrics, get_train_strategy
 from conf import VLAConfig, VLARegistry
-from vla.cogactvla_eagle_dual_sys_v2_meta_query_v2 import load, load_vla, get_vla_dataset_and_collator, CogACT
+from vla.instructvla_eagle_dual_sys_v2_meta_query_v2 import load, load_vla, get_vla_dataset_and_collator
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -76,7 +76,7 @@ class TrainConfig:
     seed: int = 42                                                  # Random seed (for reproducibility)
 
     # HF Hub Credentials (for any gated models)
-    hf_token: Union[str, Path] = Path(".hf_token")                  # Environment variable or Path to HF Token
+    hf_token: Union[str, Path] = ".hf_token"                        # Environment variable or Path to HF Token
 
     # Tracking Parameters
     trackers: Tuple[str, ...] = ("jsonl", "wandb")                  # Trackers to initialize (if W&B, add config!)
@@ -87,11 +87,14 @@ class TrainConfig:
     load_all_data_for_training: bool = True                         # Load all training data 
     future_action_window_size: int = 15                             # Action chunking, predicting future actions + current action
     past_action_window_size: int = 0                                # Action history window size, not used now, set to be 0 
-    action_model_type: str = 'DiT-B'                                # Action model type, chose from ['DiT-S', 'DiT-B', 'DiT-L']
-    use_ema: bool = False                                           # EMA version of action model
+
     action_dim: int = 7                                             # Dimension of action space
     use_mm: bool = True
     stage: str = "stage1"
+    fix_system1: bool = False
+    num_of_meta_query: int = 64
+    disable_instruction: bool = False
+    with_pointing: bool = True
 
     def __post_init__(self) -> None:
         """Lift optimization parameters from `self.vla` for ease of use =>> validate on `expected_world_size`"""
@@ -122,7 +125,7 @@ class TrainConfig:
 
 @draccus.wrap()
 def train(cfg: TrainConfig) -> None:
-    overwatch.info("CogACT-VLA Training :: Warming Up")
+    overwatch.info("Instruct-VLA Training :: Warming Up")
 
     # Note => Under `torchrun` initializing `overwatch` will automatically set up `torch.distributed`
     torch.cuda.set_device(device_id := overwatch.local_rank())
@@ -144,7 +147,7 @@ def train(cfg: TrainConfig) -> None:
 
     # Start =>> Build Directories and Set Randomness
     overwatch.info('"Do or do not; there is no try."', ctx_level=1)
-    hf_token = cfg.hf_token.read_text().strip() if isinstance(cfg.hf_token, Path) else os.environ[cfg.hf_token]
+    hf_token = cfg.hf_token
     worker_init_fn = set_global_seed(cfg.seed, get_worker_init_fn=True)
     os.makedirs(run_dir := (cfg.run_root_dir / cfg.run_id), exist_ok=True)
     os.makedirs(cfg.run_root_dir / cfg.run_id / "checkpoints", exist_ok=True)
@@ -171,21 +174,19 @@ def train(cfg: TrainConfig) -> None:
         overwatch.info(f"Loading VLA {cfg.stage} Checkpoint")
         
         vla = load_vla(cfg.pretrained_checkpoint, 
-                        hf_token=hf_token, 
                         load_for_training=not cfg.debug, 
                         action_model_type=cfg.action_model_type, 
                         action_dim=cfg.action_dim,
                         future_action_window_size=cfg.future_action_window_size,
                         past_action_window_size=cfg.past_action_window_size,
-                        use_ema=cfg.use_ema,
-                        stage=cfg.stage
+                        stage=cfg.stage,
+                        num_of_meta_query=cfg.num_of_meta_query
                         )
 
     else:
-        vlm = load(cfg.vla.base_vlm, hf_token=hf_token, load_for_training=not cfg.debug, stage=cfg.stage)
+        vlm = load(cfg.vla.base_vlm, load_for_training=not cfg.debug, stage=cfg.stage, num_of_meta_query=cfg.num_of_meta_query)
         overwatch.info("Creating VLA from Base VLM")
-        if cfg.use_ema:
-            overwatch.info("Creating EMA for Diffusion")
+
         vla = vlm
         vla.past_action_window_size = cfg.past_action_window_size
         vla.future_action_window_size = cfg.future_action_window_size
@@ -194,6 +195,7 @@ def train(cfg: TrainConfig) -> None:
     # [Validate] Model should be in Full Precision!
     for param in vla.parameters():
         assert param.dtype == torch.float32, f"Loaded VLM parameter not in full precision: {param}"
+    vla.fix_system1 = cfg.fix_system1
 
     # Print number of total/trainable model parameters
     num_params = sum(p.numel() for p in vla.parameters())
@@ -205,12 +207,23 @@ def train(cfg: TrainConfig) -> None:
     overwatch.info(f"Creating VLA Open-X Dataset with Mixture `{cfg.vla.data_mix}`")
 
     if cfg.use_mm:
-        from mm_dataset.data_utils import LazySupervisedDataset, DataCollatorForSupervisedDataset
-        mm_dataset = LazySupervisedDataset(tokenizer=vla.tokenizer,
+        from mm_dataset.data_utils import LazyPointingDataset, LazyPointDetectionDataset, LazySupervisedDataset, DataCollatorForSupervisedDataset
+        bunny_dataset = LazySupervisedDataset(tokenizer=vla.tokenizer,
                                             processor=vla.processor,
                                             data_path='bunny_dataset/finetune/bunny_llava_allava_2m.json',
                                             )
+
         mm_collator=DataCollatorForSupervisedDataset(tokenizer=vla.tokenizer)
+
+        if cfg.with_pointing:
+            from torch.utils.data import ConcatDataset
+            overwatch.info(f"Using bunny 2M + Pixmo point and point-explanation dataset")
+            pointing_dataset = LazyPointingDataset(tokenizer=vla.tokenizer, processor=vla.processor)
+            detection_dataset = LazyPointDetectionDataset(tokenizer=vla.tokenizer, processor=vla.processor)
+            mm_dataset = ConcatDataset([bunny_dataset, pointing_dataset, detection_dataset, detection_dataset])
+        else:
+            overwatch.info(f"Using bunny 2M only")
+            mm_dataset = bunny_dataset
     else:
         mm_dataset = None
         mm_collator = None
@@ -229,6 +242,9 @@ def train(cfg: TrainConfig) -> None:
         past_action_window_size=cfg.past_action_window_size,
         mm_dataset=mm_dataset,
         mm_collator=mm_collator,
+        stage=cfg.stage,
+        disable_instruction=cfg.disable_instruction,
+
     )
 
     # Save dataset statistics for de-normalization at inference time

@@ -29,7 +29,7 @@ from prismatic.util.batching_utils import SplitModalitySampler
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction, PaddedCollatorForLanguageModeling
 import time
 
-from vla import CogACT
+from vla.eagle_utils import cleanup_xlora_pre_hooks
   
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
@@ -50,7 +50,7 @@ overwatch = initialize_overwatch(__name__)
 class TrainingStrategy(ABC):
     def __init__(
         self,
-        vlm: Union[PrismaticVLM, CogACT],
+        vlm: Union[PrismaticVLM],
         device_id: int,
         stage: str,
         epochs: int,
@@ -143,34 +143,19 @@ class TrainingStrategy(ABC):
         dataset: Dataset,
         collator: PaddedCollatorForLanguageModeling,
         metrics: Metrics,
-        stage: str = "finetune",
-        batch_construction_strategy: str = "split-modality",
+        # stage: str = "finetune",
+        # batch_construction_strategy: str = "split-modality",
         seed: int = 7,
     ) -> None:
         """Run the training loop for the given `dataset` and `collator`; log losses, results to `metrics`"""
-        if "finetune" in stage and batch_construction_strategy == "split-modality":
-            # Instantiate the split-modality sampler; if you want to extend with other batch construction schemes,
-            #   (e.g., grouping by length) =>> can easily add them here!
-            modality_lengths = dataset.get_modality_lengths()
-            sampler = SplitModalitySampler(
-                dataset,
-                modality_lengths,
-                global_batch_size=self.global_batch_size,
-                num_replicas=overwatch.world_size(),
-                rank=overwatch.rank(),
-                seed=seed,
-                drop_last=False,
-            )
-
-        else:
-            sampler = DistributedSampler(
-                dataset,
-                num_replicas=overwatch.world_size(),
-                rank=overwatch.rank(),
-                shuffle=True,
-                seed=seed,
-                drop_last=False,
-            )
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=overwatch.world_size(),
+            rank=overwatch.rank(),
+            shuffle=True,
+            seed=seed,
+            drop_last=False,
+        )
 
         # Create a DataLoader with the initialized sampler, per-device-bsz, and collator
         dataloader = DataLoader(
@@ -219,10 +204,9 @@ class TrainingStrategy(ABC):
                         loss, output = self.vlm(
                             input_ids=batch["input_ids"],
                             attention_mask=batch["attention_mask"],
-                            pixel_values=batch["pixel_values"],
+                            pixel_values=batch["pixel_values"].squeeze(1),
                             labels=batch["labels"],
-                            multimodal_indices=batch["multimodal_indices"],
-                            repeated_diffusion_steps = self.repeated_diffusion_steps
+                            image_flags=batch["image_flags"],
                         )
 
                     # Commit Loss (Prior to Gradient Accumulation Normalization)
@@ -257,10 +241,9 @@ class TrainingStrategy(ABC):
                         progress.update()
                         progress.set_description(status)
 
-            # Save checkpoint at end each epoch (if `self.max_steps` is None)
-            if self.max_steps is None:
-                self.save_checkpoint(metrics.run_dir, metrics.global_step, epoch, loss.item())
-                dist.barrier()
+            # Save checkpoint at end each epoch
+            self.save_checkpoint(metrics.run_dir, metrics.global_step, epoch, loss.item())
+            dist.barrier()
 
     # === VLA Training ===
 
@@ -301,8 +284,6 @@ class TrainingStrategy(ABC):
             self.vlm.train()
 
             # Zero Gradients (just in case)
-            if self.vlm.module.use_ema is not None and self.vlm.module.use_ema == True:
-                self.vlm.module.ema_diffusion.eval()
             self.optimizer.zero_grad()
 
             # [Contract] DataLoader wraps RLDS Loader (`.as_numpy_iterator() =>> implicit `.repeat()`)
@@ -329,10 +310,9 @@ class TrainingStrategy(ABC):
                             output_hidden_states = True,
                             per_device_batch_size = self.per_device_batch_size,
                             episode_idx = torch.tensor(batch['episode_idx']),
-                            system2_pixel_values = batch['system2_pixel_values'] if 'system2_pixel_values' in batch else None,
-                            sampling_type = sampling_type,
+                            system1_pixel_values = batch['system1_pixel_values'] if 'system1_pixel_values' in batch else None, # new name
                             t = self.sample_fm_time(batch["input_ids"].shape[0]),
-                            train_idx = train_idx
+                            proprios = batch["proprios"] if "proprios" in batch else None, # for state
                         )
                     else:
                         # [Contract] self.vlm.forward() must automatically compute `loss` and return!
@@ -352,7 +332,8 @@ class TrainingStrategy(ABC):
                 normalized_loss = loss / self.grad_accumulation_steps
                 normalized_loss.backward()
 
-
+                # === Gradient Step ===
+                # Clip Gradients --> this is custom, per-strategy because of DDP vs. FSDP locality-assumptions
                 self.clip_grad_norm()
                 # Optimizer & LR Scheduler Step
                 self.optimizer.step()
@@ -380,35 +361,34 @@ class TrainingStrategy(ABC):
 
 
                 # === Gradient Step ===
-                # Step =>> Only if Done w/ Gradient Accumulation
-                if (train_idx + 1) % self.grad_accumulation_steps == 0:
-                    # Clip Gradients --> this is custom, per-strategy because of DDP vs. FSDP locality-assumptions
-                    self.clip_grad_norm()
+                # Clip Gradients --> this is custom, per-strategy because of DDP vs. FSDP locality-assumptions
+                self.clip_grad_norm()
+                # Optimizer & LR Scheduler Step
+                self.optimizer.step()
+                self.lr_scheduler.step()
+                self.optimizer.zero_grad()
 
-                    # Optimizer & LR Scheduler Step
-                    self.optimizer.step()
-                    self.lr_scheduler.step()
-                    if self.vlm.module.use_ema is not None and self.vlm.module.use_ema == True:
-                        update_ema(self.vlm.module.ema_diffusion, self.vlm.module.action_model)
-                    self.optimizer.zero_grad()
-                    # Compute epoch value using number of completed gradient steps
-                    epoch = (metrics.global_step + 1) // (len(vla_dataset) // self.global_batch_size)
+                if mm_batch is not None: # only for stage 2 training
+                    cleanup_xlora_pre_hooks(self.vlm.vlm.language_model, verbose=False)
 
-                    # Push Metrics
-                    metrics.commit(update_step_time=True, global_step=metrics.global_step + 1, epoch=epoch, lr=self.lr_scheduler.get_last_lr()[0])
-                    status = metrics.push()
+                # Compute epoch value using number of completed gradient steps
+                epoch = (metrics.global_step + 1) // (len(vla_dataset) // self.global_batch_size)
 
-                    # Check for Save Interval or Max Steps & Save Checkpoint
-                    if (terminate := (self.max_steps is not None and metrics.global_step >= self.max_steps)) or (
-                        (metrics.global_step % save_interval) == 0 and (epoch > 0 or metrics.global_step >= 15000)
-                    ):
-                        self.save_checkpoint(
-                            metrics.run_dir, metrics.global_step, epoch, loss.item(), only_trainable=not save_full_model
-                        )
-                        dist.barrier()
+                # Push Metrics
+                metrics.commit(update_step_time=True, global_step=metrics.global_step + 1, epoch=epoch, lr=self.lr_scheduler.get_last_lr()[0])
+                status = metrics.push()
 
-                    if terminate:
-                        return
+                # Check for Save Interval or Max Steps & Save Checkpoint
+                if (terminate := (self.max_steps is not None and metrics.global_step >= self.max_steps)) or (
+                    (metrics.global_step % save_interval) == 0 and (metrics.global_step >= 500) # epoch > 0 or 
+                ):
+                    self.save_checkpoint(
+                        metrics.run_dir, metrics.global_step, epoch, loss.item(), only_trainable=not save_full_model
+                    )
+                    dist.barrier()
+
+                if terminate:
+                    return
 
                 # Update Progress Bar
                 progress.update()

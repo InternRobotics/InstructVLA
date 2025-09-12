@@ -27,6 +27,9 @@ ENVIRONMENTS = [
     "widowx_carrot_on_plate",
     "widowx_stack_cube",
     "widowx_put_eggplant_in_basket",
+    'alt_grasp_spong_distractor',
+    'alt_grasp_orange_distractor',
+    # 'alt_grasp_orange_distractor2',
 ]
 
 ENVIRONMENT_MAP = {
@@ -67,6 +70,10 @@ ENVIRONMENT_MAP = {
     "widowx_carrot_on_plate": ("PutCarrotOnPlateInScene-v0", {}),
     "widowx_stack_cube": ("StackGreenCubeOnYellowCubeBakedTexInScene-v0", {}),
     "widowx_put_eggplant_in_basket": ("PutEggplantInBasketScene-v0", {}),
+
+    'alt_grasp_spong_distractor': ("AltGraspSpongeDistractorInSceneEnv-v0", {}),
+    'alt_grasp_orange_distractor': ("AltGraspOrangeDistractorInSceneEnv-v0", {}),
+    # 'alt_grasp_orange_distractor2': ("AltGraspOrange2DistractorInSceneEnv-v0", {}),
 }
 
 

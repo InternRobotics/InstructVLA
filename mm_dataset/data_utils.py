@@ -2,11 +2,12 @@ import os
 import copy
 from dataclasses import dataclass, field
 import json
-from typing import Dict, Sequence, Optional
+from typing import Callable, Dict, List, Optional, Type, Union, Tuple, Any, Sequence
 
 import torch
 
 import transformers
+import datasets
 from torch.utils.data import Dataset
 
 
@@ -16,6 +17,7 @@ from vla.eagle_utils import EagleProcessor
 from types import SimpleNamespace
 import os.path as osp
 import numpy as np
+import random
 
 @dataclass
 class DataArguments:
@@ -96,8 +98,156 @@ class LazySupervisedDataset(Dataset):
             else:
                 return self.__getitem__(i+999)
 
+class LazyPointingDataset(Dataset):
+    """Dataset for supervised fine-tuning."""
+    grounding_hints = [
+        " Please include grounding annotations using <points> tags to describe key regions.",
+        " Describe the image with <points> annotations marking important visual elements.",
+        " Add structured grounding using <points> tags for notable objects or areas in the image.",
+        " Use <points> tags to highlight and explain key image regions in your response.",
+        " Include spatial annotations with <points> tags to describe what the image shows.",
+        " Mark relevant visual features using <points> annotations in your description.",
+        " Ground your description with <points> tags referencing specific image regions.",
+        " Use <points> to identify and explain visual entities mentioned in the image.",
+        " Provide detailed grounding by tagging image parts with <points> and descriptions.",
+        " In your answer, include <points> tags to associate content with image regions.",
+        " Add <points> tags to describe objects.",
+        " Include <points> for visual grounding.",
+        " Ground your answer with <points>.",
+        " Highlight areas with <points> tags.",
+        " Insert <points> for important spots.",
+    ]
+
+    def __init__(self,
+                 tokenizer: AutoTokenizer,
+                 processor: AutoProcessor,
+                 data_path:str = '/mnt/petrelfs/yangshuai1/yangshuai1/datasets/pixmo-point-explanations-images/',
+                 ):
+        super(LazyPointingDataset, self).__init__()
+        self.tokenizer = tokenizer
+        self.list_data_dict = datasets.load_dataset(data_path,split='train')
+        self.processor = processor
+
+    def __len__(self):
+        return len(self.list_data_dict)
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        try:
+            sources = self.list_data_dict[i]
+            has_image=('image' in sources)
+            grounding_hint = random.choice(self.grounding_hints)
+            formatted_conv = [
+                {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                {
+                    "role": "user",
+                    "content": sources["question"] + grounding_hint,
+                    "image": [{'np_array': np.asarray(sources["image"])}]
+                },
+                {
+                    "role": "assistant",
+                    "content": sources['response']
+                }
+            ]
+
+            inputs = self.processor.preprocess_inputs_and_labels({"prompt": formatted_conv})
+            inputs["pixel_values"] = inputs["pixel_values"]
+            return inputs
+        except Exception as e:
+            if i>1:
+                return self.__getitem__(i-1)
+            else:
+                return self.__getitem__(i+999)
         
-        
+
+class LazyPointDetectionDataset(Dataset):
+    """Dataset for supervised fine-tuning."""
+    grounding_hints = [
+        "Count the {label} in the image, then point to them.",
+        "How many {label} are there? Point to them.",
+        "Count every {label} in the picture, then point to them.",
+        "Locate the {label} and count them, then point to them.",
+        "Find all the {label}. How many are there? Point to them.",
+        "Find each {label}. How many are there? Point to them.",
+        "Point to and count the {label} in the picture.",
+    ]
+
+    def __init__(self,
+                 tokenizer: AutoTokenizer,
+                 processor: AutoProcessor,
+                 annotation_path :str = '/mnt/petrelfs/yangshuai1/yangshuai1/datasets/pixmo-points-local/annotations_filtered_10_points.json',
+                 image_dir: str = '/mnt/petrelfs/yangshuai1/yangshuai1/datasets/pixmo-points-local'
+                 ):
+        super(LazyPointDetectionDataset, self).__init__()
+        self.tokenizer = tokenizer
+
+        with open(annotation_path,'r') as f:
+            self.annotation = json.load(f)
+        self.image_dir = image_dir
+        self.processor = processor
+
+    def points_to_text(self, points, label_text, alt_text):
+        # Round and sort the points
+        processed_points = [[round(p["x"], 1), round(p["y"], 1)] for p in points]
+        processed_points.sort(key=lambda p: p[0] * 10000 + p[1])
+
+        if len(processed_points) == 1:
+            x, y = processed_points[0]
+            return f'<point x="{x:.1f}" y="{y:.1f}" alt="{label_text}">{alt_text}</point>'
+        else:
+            point_text = []
+            for ix, (x, y) in enumerate(processed_points, start=1):
+                point_text.append(f'x{ix}="{x:.1f}"')
+                point_text.append(f'y{ix}="{y:.1f}"')
+            point_text_str = " ".join(point_text)
+            return f'<points {point_text_str} alt="{alt_text}">{label_text}</points>'
+
+    def __len__(self):
+        return len(self.annotation)
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        try:
+            sources = self.annotation[i]
+            # some images are transparent, so we always convert them into RGBA and add white background
+            image = Image.open(osp.join(self.image_dir, sources["image_path"])).convert("RGBA")
+
+            background = Image.new("RGBA", image.size, (255, 255, 255, 255))
+            image = Image.alpha_composite(background, image).convert("RGB")
+
+            label = sources["label"]
+            grounding_hint = random.choice(self.grounding_hints).format(label=label.lower())
+            user_prompt = grounding_hint
+
+            if not sources.get("points"):
+                assistant_target = "There are none."
+            else:
+                label_text = str(label).lower()
+                count = sources.get("count")
+                alt_text = f"{count} {label_text}" if count is not None else label_text
+                assistant_target = self.points_to_text(sources["points"], label_text, alt_text)
+
+            formatted_conv = [
+                {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                    "image": [{'np_array': np.asarray(image)}]
+                },
+                {
+                    "role": "assistant",
+                    "content": assistant_target
+                }
+            ]
+
+            inputs = self.processor.preprocess_inputs_and_labels({"prompt": formatted_conv})
+            inputs["pixel_values"] = inputs["pixel_values"]
+            return inputs
+
+        except Exception as e:
+            if i>1:
+                return self.__getitem__(i-1)
+            else:
+                return self.__getitem__(i+999)
+
 
 IGNORE_INDEX = -100
 @dataclass
@@ -180,9 +330,13 @@ if __name__ == "__main__":
                                                 use_fast=True,
                                                 trust_remote_code=True)
     
-    train_dataset = LazySupervisedDataset(tokenizer=tokenizer,
-                                          data_path='/mnt/petrelfs/yangshuai1/rep/cogact_with_history/bunny_dataset/finetune/bunny_allava_1.3m.json',
-                                          processor=processor)
+    # train_dataset = LazySupervisedDataset(tokenizer=tokenizer,
+    #                                       data_path='/mnt/petrelfs/yangshuai1/rep/cogact_with_history/bunny_dataset/finetune/bunny_allava_1.3m.json',
+    #                                       processor=processor)
+
+    train_dataset = LazyPointDetectionDataset(tokenizer=tokenizer,
+                                        processor=processor)
+
     from IPython import embed;embed()
-    train_dataset[0]
+    item = train_dataset[0]
 

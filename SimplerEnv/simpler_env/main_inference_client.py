@@ -57,8 +57,8 @@ class ModelSocket:
         state = self.receive_message()
         print('reset process finished YES')
 
-    def step(self, image, task_description):
-        step_message = {'action':'step', 'image':image, 'task_description':task_description}
+    def step(self, image, task_description, obs):
+        step_message = {'action':'step', 'image':image, 'task_description':task_description, 'obs':obs}
         self.send_message(step_message)
         message = self.receive_message()
         return message['raw_action'], message['action']

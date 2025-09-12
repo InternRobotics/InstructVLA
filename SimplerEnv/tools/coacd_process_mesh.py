@@ -116,6 +116,14 @@ if __name__ == "__main__":
         coacd.set_log_level("error")
 
     mesh = trimesh.load(input_file, force="mesh")
+    bbox = mesh.bounding_box
+    # Get the min and max coordinates of the bounding box
+    min_bbox = bbox.bounds[0]  # Minimum coordinates
+    max_bbox = bbox.bounds[1]  # Maximum coordinates
+
+    print("Min BBox:", min_bbox)
+    print("Max BBox:", max_bbox)
+
     mesh = coacd.Mesh(mesh.vertices, mesh.faces)
     result = coacd.run_coacd(
         mesh,

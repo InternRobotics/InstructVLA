@@ -5,7 +5,7 @@
 # --------------------------------------------------------
 
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# The code is only for backup, the running code is in /mnt/petrelfs/yangshuai1/rep/cogact_with_history/ckpt/Eagle2-2B/modeling_eagle_chat.py
+# The code is only for backup, the running code is in ./ckpt/Eagle2-2B/modeling_eagle_chat.py
 # @@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 import warnings
@@ -24,9 +24,28 @@ from peft import LoraConfig, get_peft_model
 from transformers.models.siglip.modeling_siglip import SiglipVisionModel
 
 from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
+import functools
+
 
 logger = logging.get_logger(__name__)
 from .configuration_eagle_chat import Eagle2ChatConfig
+
+def cleanup_xlora_pre_hooks(model, verbose=True):
+    cleaned = 0
+    for _, m in model.named_modules():
+        d = getattr(m, "_forward_pre_hooks", None)
+        if not isinstance(d, dict):
+            continue
+        for k, cb in list(d.items()):
+            is_xlora = isinstance(cb, functools.partial) and getattr(cb.func, "__name__", "") == "scalings_injection_hook"
+            if is_xlora:
+                try:
+                    d.pop(k, None)
+                    cleaned += 1
+                except Exception:
+                    pass
+    if verbose and cleaned:
+        print(f"[XLORA] cleaned {cleaned} stale pre_hooks")
 
 def version_cmp(v1, v2, op='eq'):
     import operator
@@ -164,8 +183,10 @@ class Eagle2ChatModel(PreTrainedModel):
             input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds.reshape(-1, C)
         except Exception as e:
             vit_embeds = vit_embeds.reshape(-1, C)
-            print(f'warning: {e}, input_embeds[selected].shape={input_embeds[selected].shape}, '
-                  f'vit_embeds.shape={vit_embeds.shape}')
+            if torch.distributed.get_rank() == 0:
+                print(pixel_values.shape,input_embeds.shape)
+                print(f'warning: {e}, input_embeds[selected].shape={input_embeds[selected].shape}, '
+                    f'vit_embeds.shape={vit_embeds.shape}')
             n_token = selected.sum()
             input_embeds[selected] = input_embeds[selected] * 0.0 + vit_embeds[:n_token]
 
@@ -417,9 +438,12 @@ class Eagle2ChatModel(PreTrainedModel):
             attention_mask=attention_mask,
             generation_config=generation_config,
             output_hidden_states=output_hidden_states,
-            use_cache=True,
+            # return_dict=return_dict, # default is True
             **generate_kwargs,
         )
+
+        cleanup_xlora_pre_hooks(self.language_model)
+
 
         return outputs
         

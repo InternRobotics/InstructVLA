@@ -33,7 +33,6 @@ from transformers.optimization import get_constant_schedule, get_cosine_schedule
 from prismatic.models.vlms import PrismaticVLM
 from prismatic.overwatch import initialize_overwatch
 
-from vla import CogACT
 from training.strategies.base_strategy_cogact import TrainingStrategy
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
@@ -43,7 +42,7 @@ overwatch = initialize_overwatch(__name__)
 class FSDPStrategy(TrainingStrategy):
     def __init__(
         self,
-        vlm: Union[PrismaticVLM, CogACT],
+        vlm: Union[PrismaticVLM],
         device_id: int,
         stage: str,
         epochs: int,

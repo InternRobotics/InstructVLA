@@ -28,6 +28,9 @@ from prismatic.vla.datasets.rlds.utils.data_utils import (
     tree_map,
 )
 
+import os
+from pathlib import Path
+
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
 
@@ -130,21 +133,27 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
+    current_file = Path(__file__).resolve()
+    annotation_root = current_file.parents[2] / "data_pipeline" / "data"
+
     reasoning_dataset_paths = [
-        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/bridge_merged.json",
-        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data/fractal.json",
-        "/mnt/petrelfs/yangshuai1/rep/cogact_with_history/data_pipeline/data_pipeline/bin_classification/output.json"
+        annotation_root / "bridge_merged.json",
+        annotation_root / "fractal_merged_long_horizon.json",
+        annotation_root / "real_math.json", # optional, for real-world experiment
     ]
     reasoning_dataset = {}
-    if "fractal" in name:
-        anno_index = 1
-    elif 'bridge' in name:
+    if "bridge" in name:
         anno_index = 0
+    elif 'fractal' in name:
+        anno_index = 1
+    elif 'real' in name:
+        anno_index = 2
     else:
-        anno_index = -1
+        anno_index = -1 # skip reasoning
 
-    with open(reasoning_dataset_paths[anno_index], "r") as f:
-        reasoning_dataset.update(json.load(f))
+    if anno_index != -1:
+        with open(reasoning_dataset_paths[anno_index], "r") as f:
+            reasoning_dataset.update(json.load(f))
 
     def make_tf_dict(raw_dict):
         print("Building the reasoning dict...")
@@ -159,7 +168,6 @@ def make_dataset_from_rlds(
 
                 for i,move_primitive in enumerate(raw_dict[file_name][episode_id]["features"]["move_primitive"]):
                     keys.append(file_name + "_" + str(episode_id) + "_" + str(i))
-                    # TODO: add alternative instruction here
 
                     values.append(
                         json.dumps(dict(
@@ -174,8 +182,11 @@ def make_dataset_from_rlds(
         default_value = json.dumps(dict(move_primitive = None, alt_instruction = None))
 
         return tf.lookup.StaticHashTable(tf.lookup.KeyValueTensorInitializer(keys, values), default_value=default_value)
-
-    reasoning_dataset = make_tf_dict(reasoning_dataset)
+    
+    if anno_index != -1:
+        reasoning_dataset = make_tf_dict(reasoning_dataset)
+    else:
+        reasoning_dataset = None
 
     def restructure(traj):
         # apply a standardization function, if provided
@@ -228,14 +239,6 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
         
-        file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
-        episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
-
-        file_names = tf.repeat(file_name, traj_len)
-        episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
-        indices = tf.as_string(tf.range(traj_len))
-        reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
-
         traj = {
             "observation": new_obs,
             "task": task,
@@ -243,8 +246,18 @@ def make_dataset_from_rlds(
             "dataset_name": tf.repeat(name, traj_len),
             "idx": traj['_traj_index'],
             "frame_idx": traj['_frame_index'],
-            "reasonings": reasonings,
         }
+
+        if reasoning_dataset is not None:
+            # get id, only available for bridge and the modified fractal
+            file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+            episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
+
+            file_names = tf.repeat(file_name, traj_len)
+            episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+            indices = tf.as_string(tf.range(traj_len))
+            reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
+            traj["reasonings"] = reasonings # append reasoning if exists
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:

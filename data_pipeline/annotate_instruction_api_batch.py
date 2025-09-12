@@ -16,29 +16,27 @@ from tqdm import tqdm
 
 from openai import OpenAI
 
-# ---------------------------
-# ★★★ 全局配置
-# ---------------------------
-DATASET_DIR      = '/mnt/hwfile/OpenRobotLab/robot_data/cache/fractal20220817_data/0.1.0'
-SAVE_DIR         = Path("data_pipeline/batch_run_25k")
+
+DATASET_DIR      = './fractal20220817_data/0.1.0'
+SAVE_DIR         = Path("data_pipeline/batch_run")
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 JSON_PATH        = SAVE_DIR / "output.json"
 
 NUM_THREADS      = 5
-EP_PER_THREAD    = 5_000          # 每线程 5 000 条
-SAVE_EVERY       = 5            # 收集满 500 条再写盘
+EP_PER_THREAD    = 5_000
+SAVE_EVERY       = 5
 
-MODEL_NAME       = "qwen2.5-vl-72b-instruct"
+MODEL_NAME       = "gpt-4o"
 API_CONFIG       = dict(
-    api_key="sk-01c070ce110e4e3a8af73cacdaef8ea5",
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key="sk-TBD",
+    base_url="TBD"
 )
 
-buffer_lock = threading.Lock()      # 保护 output_dict 和 pending_cnt
-output_dict: Dict[str, dict] = {}   # 所有已完成 annotation
-pending_cnt = 0                     # 距上次落盘已累积的条数
+buffer_lock = threading.Lock()
+output_dict: Dict[str, dict] = {}   
+pending_cnt = 0                     
 
-if JSON_PATH.exists():              # 允许断点续跑
+if JSON_PATH.exists():              
     with JSON_PATH.open() as f:
         output_dict.update(json.load(f))
 

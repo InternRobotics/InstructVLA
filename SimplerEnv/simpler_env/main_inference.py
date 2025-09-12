@@ -34,57 +34,18 @@ if __name__ == "__main__":
         )
 
     # policy model creation; update this if you are using a new policy model
-    if args.policy_model == "rt1":
+
+    if 'state' not in args.ckpt_path: #"meta" in args.ckpt_path:
+        from simpler_env.policies.sim_instructvla import MetaInstructVLAInference
         assert args.ckpt_path is not None
-        # model = RT1Inference(
-        #     saved_model_path=args.ckpt_path,
-        #     policy_setup=args.policy_setup,
-        #     action_scale=args.action_scale,
-        # )
-    elif "octo" in args.policy_model:
-        if args.ckpt_path is None or args.ckpt_path == "None":
-            args.ckpt_path = args.policy_model
-        # if "server" in args.policy_model:
-        #     model = OctoServerInference(
-        #         model_type=args.ckpt_path,
-        #         policy_setup=args.policy_setup,
-        #         action_scale=args.action_scale,
-        #     )
-        # else:
-        #     model = OctoInference(
-        #         model_type=args.ckpt_path,
-        #         policy_setup=args.policy_setup,
-        #         init_rng=args.octo_init_rng,
-        #         action_scale=args.action_scale,
-        #     )
-    elif args.policy_model == "cogact":
-        if "meta" in args.ckpt_path:
-            from simpler_env.policies.sim_cogact import MetaCogACTInference
-            assert args.ckpt_path is not None
-            model = MetaCogACTInference(
-                saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
-                policy_setup=args.policy_setup,
-                action_scale=args.action_scale,
-                action_model_type='DiT-B',
-                cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
-            )
-        else:
-            raise NotImplementedError('The code is only varified using meta token method.')
-            from simpler_env.policies.sim_cogact import CogACTInference
-            assert args.ckpt_path is not None
-            model = CogACTInference(
-                saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
-                policy_setup=args.policy_setup,
-                action_scale=args.action_scale,
-                action_model_type='DiT-B',
-                cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
-            )
-    elif args.policy_model == "openvla":
-        assert args.ckpt_path is not None
-        from simpler_env.policies.openvla.openvla_model import OpenVLAInference
-        sys.path.insert(0, '/mnt/petrelfs/yangshuai1/rep/openvla-mini/SimplerEnv')
-        sys.path.insert(0, '/mnt/petrelfs/yangshuai1/rep/openvla-mini')
-        model = OpenVLAInference(
+        model = MetaInstructVLAInference(
+            saved_model_path=args.ckpt_path,
+            policy_setup=args.policy_setup,
+            action_scale=args.action_scale,
+        )
+    elif "state" in args.ckpt_path:
+        from simpler_env.policies.sim_instructvla import MetaStateInstructVLAInference
+        model = MetaStateInstructVLAInference(
             saved_model_path=args.ckpt_path,
             policy_setup=args.policy_setup,
             action_scale=args.action_scale,

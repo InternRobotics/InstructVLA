@@ -59,7 +59,7 @@ class ServerSocket:
                         state = 'YES'
                         self.send_message(conn, state)
                     elif data['action'] == 'step':
-                        raw_action, action = self.model.step(data['image'], data['task_description'])
+                        raw_action, action = self.model.step(data['image'], data['task_description'], data['obs'])
                         message = {'raw_action':raw_action, 'action':action}
                         self.send_message(conn, message)
                 except Exception as e:
@@ -81,28 +81,22 @@ if __name__ == "__main__":
         )
 
     # policy model creation; update this if you are using a new policy model
-    args.policy_model = "cogact"
-    assert args.policy_model == "cogact"
-    if "meta" in args.ckpt_path:
-        from simpler_env.policies.sim_cogact import MetaCogACTInference
+    if 'state' not in args.ckpt_path: #"meta" in args.ckpt_path:
+        from simpler_env.policies.sim_instructvla import MetaInstructVLAInference
         assert args.ckpt_path is not None
-        model = MetaCogACTInference(
-            saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
+        model = MetaInstructVLAInference(
+            saved_model_path=args.ckpt_path,
             policy_setup=args.policy_setup,
             action_scale=args.action_scale,
-            action_model_type='DiT-B',
-            cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
+        )
+    elif "state" in args.ckpt_path:
+        from simpler_env.policies.sim_instructvla import MetaStateInstructVLAInference
+        model = MetaStateInstructVLAInference(
+            saved_model_path=args.ckpt_path,
+            policy_setup=args.policy_setup,
+            action_scale=args.action_scale,
         )
     else:
         raise NotImplementedError('The code is only varified using meta token method.')
-        from simpler_env.policies.sim_cogact import CogACTInference
-        assert args.ckpt_path is not None
-        model = CogACTInference(
-            saved_model_path=args.ckpt_path,  # e.g., CogACT/CogACT-Base
-            policy_setup=args.policy_setup,
-            action_scale=args.action_scale,
-            action_model_type='DiT-B',
-            cfg_scale=1.5                     # cfg from 1.5 to 7 also performs well
-        )
     server = ServerSocket(model=model, host=args.host, port=args.port)
     server.start()
