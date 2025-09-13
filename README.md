@@ -40,7 +40,7 @@
 - [📄 License](#license)
 - [👏 Acknowledgements](#acknowledgements) -->
 
-## 🔥 Overview `<a name="overview"></a>`
+## 🔥 Overview <a name="overview"></a>
 
 1. We propose **InstructVLA**, a VLA architecture and training pipeline that emphasizes the importance of language capability in VLAs by efficiently preserving pretrained vision-language knowledge from VLMs while integrating manipulation as a component of instruction following.
 2. We design **a practical data and evaluation pipeline for vision-language-action instruction following**, supported by 650K tailored VLA-IT annotations and a manually curated benchmark suite, enabling evaluation of VLAs' instruction generalization capabilities.
@@ -357,14 +357,14 @@ srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
 
 
 
-## 📌 TODO `<a name="todo"></a>`
+## 📌 TODO <a name="todo"></a>
 
 - [X] Release the VLA-IT dataset.
 - [X] Release the SimplerEnv-Instruct.
 - [X] Release the checkpoints and training code for post-training and finetuning.
 - [ ] More powerful InstructVLA v2.0.
 
-## 🔗 Citation `<a name="citation"></a>`
+## 🔗 Citation <a name="citation"></a>
 
 If you find our work helpful, please cite:
 
