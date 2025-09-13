@@ -160,6 +160,10 @@ class InstructVLA(nn.Module):
             from peft import XLoraConfig
             from peft.tuners.lora import LoraLayer 
             
+            empty_language_adapter = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "ckpt", "empty_language_adapter")
+            )
+
             lora_config = XLoraConfig(
                 task_type="CAUSAL_LM",
                 hidden_size=token_size,

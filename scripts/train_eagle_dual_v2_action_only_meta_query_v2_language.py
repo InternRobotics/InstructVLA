@@ -33,7 +33,7 @@ from prismatic.overwatch import initialize_overwatch
 from prismatic.util import set_global_seed
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
-from training import VLAMetrics, get_train_strategy
+from training import Metrics, get_train_strategy
 from conf import VLAConfig, VLARegistry
 from vla.instructvla_eagle_dual_sys_v2_meta_query_v2 import load, load_vla, get_vla_dataset_and_collator
 
@@ -94,12 +94,12 @@ class TrainConfig:
     fix_system1: bool = False
     num_of_meta_query: int = 64
     disable_instruction: bool = False
-    with_pointing: bool = True
 
     def __post_init__(self) -> None:
         """Lift optimization parameters from `self.vla` for ease of use =>> validate on `expected_world_size`"""
         self.epochs = self.vla.epochs
-        self.max_steps = self.vla.max_steps
+        overwatch.warning(f"Remove max steps for VLM-only training")
+        self.max_steps = None # only for VLM training!!!
         self.global_batch_size = self.vla.global_batch_size
         self.per_device_batch_size = self.vla.per_device_batch_size
 
@@ -194,7 +194,17 @@ def train(cfg: TrainConfig) -> None:
     # [Validate] Model should be in Full Precision!
     for param in vla.parameters():
         assert param.dtype == torch.float32, f"Loaded VLM parameter not in full precision: {param}"
-    vla.fix_system1 = cfg.fix_system1
+
+    overwatch.warning(
+        f"Removing the action head beacuse we only finetune the llm backbone!!!"
+    )
+    filtered_trainable_keys = []
+    for key in vla._trainable_module_keys:
+        if key != 'action_model':
+            filtered_trainable_keys.append(key)
+    vla._trainable_module_keys = filtered_trainable_keys
+    del vla.action_model
+
 
     # Print number of total/trainable model parameters
     num_params = sum(p.numel() for p in vla.parameters())
@@ -205,52 +215,25 @@ def train(cfg: TrainConfig) -> None:
 
     overwatch.info(f"Creating VLA Open-X Dataset with Mixture `{cfg.vla.data_mix}`")
 
-    if cfg.use_mm:
-        from mm_dataset.data_utils import LazyPointingDataset, LazyPointDetectionDataset, LazySupervisedDataset, DataCollatorForSupervisedDataset
-        bunny_dataset = LazySupervisedDataset(tokenizer=vla.tokenizer,
-                                            processor=vla.processor,
-                                            data_path='bunny_dataset/finetune/bunny_llava_allava_2m.json',
-                                            )
+    # from torch.utils.data import ConcatDataset
+    # from mm_dataset.data_utils import LazyPointingDataset, LazyPointDetectionDataset, DataCollatorForSupervisedDataset
 
-        mm_collator=DataCollatorForSupervisedDataset(tokenizer=vla.tokenizer)
+    # pointing_dataset = LazyPointingDataset(tokenizer=vla.tokenizer, processor=vla.processor)
+    # detection_dataset = LazyPointDetectionDataset(tokenizer=vla.tokenizer, processor=vla.processor)
 
-        if cfg.with_pointing:
-            from torch.utils.data import ConcatDataset
-            overwatch.info(f"Using bunny 2M + Pixmo point and point-explanation dataset")
-            pointing_dataset = LazyPointingDataset(tokenizer=vla.tokenizer, processor=vla.processor)
-            detection_dataset = LazyPointDetectionDataset(tokenizer=vla.tokenizer, processor=vla.processor)
-            mm_dataset = ConcatDataset([bunny_dataset, pointing_dataset, detection_dataset, detection_dataset])
-        else:
-            overwatch.info(f"Using bunny 2M only")
-            mm_dataset = bunny_dataset
-    else:
-        mm_dataset = None
-        mm_collator = None
+    # mm_dataset = ConcatDataset([pointing_dataset, detection_dataset])
+    # mm_collator = DataCollatorForSupervisedDataset(tokenizer=vla.tokenizer)
 
-    vla_dataset, _, collator = get_vla_dataset_and_collator(
-        cfg.data_root_dir,
-        cfg.vla.data_mix,
-        processor=vla.processor,
-        tokenizer=vla.tokenizer,
-        image_processor=vla.action_model.default_dino_transform,
-        default_image_resolution=(3, 224, 224), # hard code here
-        shuffle_buffer_size=cfg.vla.shuffle_buffer_size,
-        image_aug=cfg.image_aug,
-        load_all_data_for_training=cfg.load_all_data_for_training,
-        future_action_window_size=cfg.future_action_window_size,
-        past_action_window_size=cfg.past_action_window_size,
-        mm_dataset=mm_dataset,
-        mm_collator=mm_collator,
-        stage=cfg.stage,
-        disable_instruction=cfg.disable_instruction,
+    from mm_dataset.data_utils import LazyPointingDataset, LazyPointDetectionDataset, LazySupervisedDataset, DataCollatorForSupervisedDataset
+    mm_dataset = LazySupervisedDataset(tokenizer=vla.tokenizer,
+                                        processor=vla.processor,
+                                        data_path='bunny_dataset/finetune/bunny_695k.json',
+                                        )
 
-    )
+    mm_collator=DataCollatorForSupervisedDataset(tokenizer=vla.tokenizer)
 
+    # remove action dataset because we only finetunng language output
     # Save dataset statistics for de-normalization at inference time
-    if overwatch.is_rank_zero():
-        save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
-
-
     dist.barrier()
     # Create Train Strategy
     overwatch.info(f"Initializing Train Strategy `{cfg.train_strategy}`")
@@ -275,34 +258,29 @@ def train(cfg: TrainConfig) -> None:
         worker_init_fn=worker_init_fn,
         repeated_diffusion_steps=cfg.repeated_diffusion_steps,
     )
-    train_strategy.run_setup(run_dir=run_dir, n_train_examples=len(vla_dataset))
+    train_strategy.run_setup(run_dir=run_dir, n_train_examples=len(mm_dataset))
     if cfg.pretrained_checkpoint is not None and cfg.is_resume:
         train_strategy.load_optimizer_and_scheduler(cfg.pretrained_checkpoint)
 
     # Create Metrics =>> Handles on the fly tracking, logging to specified trackers (e.g., JSONL, Weights & Biases)
     overwatch.info(f"Creating Metrics with Active Trackers => `{cfg.trackers}`")
-    metrics = VLAMetrics(
+    metrics = Metrics(
         cfg.trackers,
         cfg.run_id,
         run_dir,
         draccus.encode(cfg),
+        stage='finetune',
         wandb_project=cfg.wandb_project,
         wandb_entity=cfg.wandb_entity,
-        resume_step=cfg.resume_step,
-        resume_epoch=cfg.resume_epoch,
     )
 
     # Run VLA Training
     overwatch.info("Starting VLA Training Loop")
 
-    train_strategy.run_vla_training(
-        vla_dataset,
-        collator,
-        metrics,
-        save_interval=cfg.save_interval,
-        mm_dataset=mm_dataset,
-        mm_collator=mm_collator,
-        action_model=True,
+    train_strategy.run_training(
+        metrics = metrics,
+        dataset=mm_dataset,
+        collator=mm_collator,
     )
 
     # Finalize

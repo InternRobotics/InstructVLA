@@ -35,7 +35,7 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
 from training import VLAMetrics, get_train_strategy
 from conf import VLAConfig, VLARegistry
-from vla.instructvla_eagle_dual_sys_v2_meta_query_v2 import load, load_vla, get_vla_dataset_and_collator
+from vla.instructvla_eagle_dual_sys_v2_meta_query_v2_libero_wrist import load, load_vla, get_vla_dataset_and_collator
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

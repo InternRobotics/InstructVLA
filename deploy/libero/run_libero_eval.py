@@ -64,17 +64,12 @@ class GenerateConfig:
     #################################################################################################################
     model_family: str = "instruct_vla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
-    action_scale: float = 1.0
-    action_model_type: str = 'DiT-B'
-    cfg_scale: str = 1.5
     unnorm_key: Optional[str] = None
     horizon: int = 8
     action_ensemble_horizon: Optional[int] = 8
     # image_size: list[int] = [224, 224]
     future_action_window_size: int = 7
     action_dim: int = 7
-    use_ddim: bool = True
-    num_ddim_steps: int = 10
     use_bf16: bool = True
     action_ensemble = True
     adaptive_ensemble_alpha = 0.1
@@ -131,12 +126,6 @@ def eval_libero(cfg: GenerateConfig) -> None:
         assert cfg.unnorm_key in model.norm_stats, f"Action un-norm key {cfg.unnorm_key} not found in VLA `norm_stats`!"
 
     elif cfg.model_family == "instruct_vla":
-        # [OpenVLA] Set action un-normalization key
-        cfg.unnorm_key = f"{cfg.task_suite_name}_no_noops"
-        model, server = get_model(cfg)
-
-    
-    elif cfg.model_family == "instruct_vla_no_dino":
         # [OpenVLA] Set action un-normalization key
         cfg.unnorm_key = f"{cfg.task_suite_name}_no_noops"
         model, server = get_model(cfg)

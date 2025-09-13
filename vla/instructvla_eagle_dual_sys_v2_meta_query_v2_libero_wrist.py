@@ -168,7 +168,11 @@ class InstructVLA(nn.Module):
             # We defaultly use the dense method, the inital scale of each adapter is 1/num_adapter
             # The language expert is initaled from zero
             from peft import XLoraConfig
-            
+
+            empty_language_adapter = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "ckpt", "empty_language_adapter")
+            )
+
             lora_config = XLoraConfig(
                 task_type="CAUSAL_LM",
                 hidden_size=token_size,
@@ -303,32 +307,8 @@ class InstructVLA(nn.Module):
         train_idx = 0,
         **kwargs,
     ) -> Tuple:
-        """Run a forward pass through the VLM, returning a CausalLMOutputWithPast instance (contains loss)."""
-        '''
-        VLM Input & Repeated Cognition Features
-        (Index range: 0 to 13 for B=2, N+1=7)
-
-        VLM Input Index:         0   1   2   3   4   5   6     7   8   9  10  11  12  13
-        Sample Index:           [0   0   0   0   0   0   0]   [1   1   1   1   1   1   1]
-        Timestep in Sample:      0   1   2   3   4   5   6     0   1   2   3   4   5   6
-        Shift Offset:            6   5   4   3   2   1   0     6   5   4   3   2   1   0
-                                 ↑    past frames    ↑   *     ↑    past frames    ↑   *
-                        (used to slice action target windows from right end of trajectory)
-
-        repeated_cognition_features: (used in action_model)
-                                └──────── sample 0 ───────┘    └─────── sample 1 ───────┘
-
-        action_model pred[i] corresponds to:
-        → future_actions[i] = actions[batch_idx, -(T+shift_offset):-shift_offset]
-        vlm takes the first frames and head takes all frames
-        '''
-
-        # from IPython import embed;embed()
-        # indices_for_past = torch.cat([torch.arange(i*(self.past_action_window_size+1), i*(self.past_action_window_size+1)+self.past_action_window_size) for i in range(per_device_batch_size)])
-        # indices_for_now = torch.arange(self.past_action_window_size, per_device_batch_size*(self.past_action_window_size+1), self.past_action_window_size+1)
-
         if actions is None:
-            # make it a vlm
+            # standard vlm forward
             # from IPython import embed;embed()
             per_device_batch_size = input_ids.shape[0]
             output: CausalLMOutputWithPast = self.vlm(
@@ -349,19 +329,14 @@ class InstructVLA(nn.Module):
         else:
 
             assert per_device_batch_size == actions.shape[0]
-            assert input_ids.shape[0] == (per_device_batch_size * (self.past_action_window_size+1)), f"input_ids.shape[0] = {input_ids.shape[0]}, but should be {per_device_batch_size * (self.past_action_window_size+1)} "
-
-            first_past_indices = torch.arange(per_device_batch_size) * (self.past_action_window_size + 1)
-
-            # from IPython import embed;embed()
 
             output: CausalLMOutputWithPast = self.vlm(
-                input_ids=input_ids[first_past_indices],
-                attention_mask=attention_mask[first_past_indices],
-                pixel_values=pixel_values[first_past_indices],
-                labels=labels[first_past_indices],
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                labels=labels,
                 # inputs_embeds=inputs_embeds,
-                image_flags=torch.ones((first_past_indices.shape[0],1)).to( device=input_ids.device) if image_flags is None else image_flags,
+                image_flags=torch.ones((input_ids.shape[0],1)).to( device=input_ids.device) if image_flags is None else image_flags,
                 past_key_values=past_key_values,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
@@ -514,7 +489,7 @@ class InstructVLA(nn.Module):
         if "action_model" in model_state_dict:
             instruct_vla.action_model.load_state_dict(model_state_dict["action_model"], strict=False)
         else:
-            overwatch.warning("No ActionModel found in the pretrained checkpoint. Initializing a new one.")
+            overwatch.warning("No Action Model found in the pretrained checkpoint. Initializing a new one.")
         return instruct_vla       
 
     @torch.inference_mode()

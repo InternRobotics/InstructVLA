@@ -1,0 +1,386 @@
+<br>
+<p align="center">
+  <h1 align="center"><strong>InstructVLA:<br>Vision-Language-Action Instruction Tuning<br>from Understanding to Manipulation</strong></h1>
+  <p align="center">
+    <a href='' target='_blank'>Shuai Yang*</a>, <a href='' target='_blank'>Hao Li*</a>, <a href='https://yilunchen.com/about/' target='_blank'>Yilun Chen</a>, <a href='' target='_blank'>Bin Wang</a>, <a href='' target='_blank'>Yang Tian</a>, <a href='https://tai-wang.github.io/' target='_blank'>Tai Wang</a>, <br><a href='https://hanqingwangai.github.io/' target='_blank'>Hanqing Wang</a>, <a href='https://scholar.google.co.uk/citations?user=r6CvuOUAAAAJ&hl=en' target='_blank'>Feng Zhao</a>, <a href='' target='_blank'>Yiyi Liao</a>, <a href='https://oceanpang.github.io/' target='_blank'>Jiangmiao Pang</a>
+    <br>
+    * Equal Contributions
+    <br>
+    University of Science and Technology of China, Zhejiang University, <br> Shanghai Artificial Intelligence Laboratory
+    <br>
+  </p>
+
+<!-- <p align="center"><strong>Under Review</strong></p> -->
+
+</p>
+
+
+<p align="center">
+  <a href="http://arxiv.org/abs/2507.17520/">
+    <img src="https://img.shields.io/badge/arXiv-2507.17520-green" alt="arXiv">
+  </a>
+  <a href="https://yangs03.github.io/InstructVLA_Home/">
+    <img src="https://img.shields.io/badge/Homepage-%F0%9F%8C%90-blue" alt="Homepage">
+  </a>
+  <a href="https://huggingface.co/datasets/ShuaiYang03/VLA_Instruction_Tuning">
+    <img src="https://img.shields.io/badge/HuggingFace-Dataset-yellow?logo=huggingface" alt="HuggingFace Dataset">
+  </a>
+  <a href="https://github.com/YangS03/my_maniskill/tree/main/scripts">
+    <img src="https://img.shields.io/badge/benchmark-%F0%9F%8C%90-red" alt="Benchmark">
+  </a>
+</p>
+
+
+<!-- ## 📋 Contents
+
+- [🔥 Highlight](#highlight)
+- [🛠️ Getting Started](#getting_started)
+- [📌 TODO](#todo)
+- [🔗 Citation](#citation)
+- [📄 License](#license)
+- [👏 Acknowledgements](#acknowledgements) -->
+
+## 🔥 Overview `<a name="overview"></a>`
+
+1. We propose **InstructVLA**, a VLA architecture and training pipeline that emphasizes the importance of language capability in VLAs by efficiently preserving pretrained vision-language knowledge from VLMs while integrating manipulation as a component of instruction following.
+2. We design **a practical data and evaluation pipeline for vision-language-action instruction following**, supported by 650K tailored VLA-IT annotations and a manually curated benchmark suite, enabling evaluation of VLAs' instruction generalization capabilities.
+3. InstructVLA achieves leading performance across robotic manipulation tasks, multimodal benchmarks, and real-world deployments, enabling intuitive and controllable human-robot interaction.
+
+<img src="./asset/teaser.png" alt="framework" width="100%" class="center">
+
+## 🛠️ Getting Started <a name="getting_started"></a>
+
+### Download Data and Assets
+
+#### Vision-Language-Action Instruction Tuning Dataset
+
+1. Download the dataset from [VLA\_Instruction\_Tuning](https://huggingface.co/datasets/ShuaiYang03/VLA_Instruction_Tuning).
+2. Move `VLA_Instruction_Tuning/annotation/bridge_instruction.json` and `VLA_Instruction_Tuning/annotation/fractal_instruction.json` to `data_pipeline/data/`.
+3. Move `VLA_Instruction_Tuning/bridge_dataset` and `VLA_Instruction_Tuning/fractal20220817_data` to the directory where you store the OXE datasets.
+
+   * Note: We modified the fractal dataset by adding episode IDs and file IDs aligned with the bridge dataset to facilitate indexing.
+   * Ensure that `--run_root_dir` points to the directory containing your OXE datasets.
+4. A usage example is provided in `data_pipeline/data_loading_example.ipynb`, which previews the dataset.
+
+#### General Multimodal Dataset
+
+We use the [Bunny](https://huggingface.co/datasets/BoyaWu10/Bunny-v1_1-data/tree/main/finetune) dataset as the multimodal source for VLA-IT training.
+
+* Download the dataset to the project root and rename the folder as `bunny_dataset`.
+* Use the 2M mixture file: `bunny_llava_allava_2m.json`.
+
+
+#### Pretrained Weights
+
+1. Download the VLM and Empty LoRA adapter from [InstructVLA\_Assets](https://huggingface.co/ShuaiYang03/InstructVLA_Assets) and place them in `ckpt/`.
+2. Download additional pretrained checkpoints from [InstructVLA-collection](https://huggingface.co/collections/ShuaiYang03/instructvla-68c2434c3615cf1597894e86).
+
+   * `instructvla_pretraining_v2_libero_xxx`: Pretrained LIBERO checkpoints.
+   * `instructvla_pretraining_v2_query_64_lora_state--image_aug` and `instructvla_pretraining_v2_query_64_lora--image_aug`: InstructVLA-Expert checkpoints (with/without robot states) trained on SimplerEnv-Instruct.
+   * `instructvla_finetune_v2_xlora_freeze_head_instruction_state--image_aug` and `instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug`: InstructVLA-Generalist checkpoints (with/without robot states) trained on SimplerEnv and SimplerEnv-Instruct.
+
+   **Recommendation:**
+
+   * InstructVLA-Expert *with* states shows stronger performance on SimplerEnv.
+   * InstructVLA-Generalist *without* states generalizes better on SimplerEnv-Instruct.
+
+#### Conda Environment
+
+```bash
+# Create and activate virtual environment (conda or venv)
+conda create -n instructvla python=3.10 -y
+conda activate instructvla
+# Install PyTorch (with CUDA 12.1 support)
+pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 --index-url https://download.pytorch.org/whl/cu121
+# HuggingFace ecosystem
+pip install transformers==4.51.0 accelerate==1.3.0 peft==0.13.0
+
+# Install Flash Attention 2 for training (https://github.com/Dao-AILab/flash-attention)
+#   =>> If you run into difficulty, try `pip cache remove flash_attn` first
+pip install packaging ninja
+ninja --version; echo $?  # Verify Ninja --> should return exit code "0"
+pip install "flash-attn==2.5.5" --no-build-isolation
+```
+
+
+#### Benchmark Installation
+
+1. **LIBERO**: Clone the repository into the project root and follow its installation guide (`README.md`).
+2. **SimplerEnv and SimplerEnv-Instruct**: Clone the modified [ManiSkill2\_real2sim](https://github.com/YangS03/my_maniskill) under `InstructVLA/SimplerEnv`, then rename it to `ManiSkill2_real2sim`. Install both projects following their respective `README.md` files.
+3. **vlmeval**: Please follow `mm_evaluation/vlmeval/README.md`.
+
+### Project Structure
+
+* **`prismatic`**: Dataloader from OpenVLA, along with utility tools such as `overwatch`.
+
+  * The VLA-IT dataset is loaded in `/prismatic/vla/datasets/rlds/dataset.py`.
+  * We customize `RLDSBatchTransform` and `PaddedCollatorForActionPrediction` in each version of the InstructVLA models under the `vla/` folder, since different variants use different input information.
+
+* **`vla`**: Model implementations.
+
+  * `film_vit.py`: Adapted from OpenVLA-OFT with modifications.
+  * `action_head.py`: Contains two action head configurations (with/without robot state).
+  * `eagle_utils.py`: Formats the prompts.
+  * `modeling_eagle_chat.py`: Backup of `ckpt/Eagle2-2B/modeling_eagle_chat.py`; not used.
+  * `instructvla_eagle_dual_sys_v2_meta_query_v2.py`: Basic InstructVLA model with a single third-view input.
+  * `instructvla_eagle_dual_sys_v2_meta_query_v2_state.py`: InstructVLA variant using both third-view input and robot state (for SimplerEnv and SimplerEnv-Instruct).
+  * `instructvla_eagle_dual_sys_v2_meta_query_v2_libero_wrist.py`: InstructVLA variant using both third-view and wrist-view inputs (for LIBERO).
+
+* **`scripts`**: Training scripts.
+
+  * `train_eagle_dual_v2_action_only_meta_query_v2.py`: Pretraining and fine-tuning script for InstructVLA on SimplerEnv.
+  * `train_eagle_dual_v2_action_only_meta_query_v2_libero_wrist.py`: Training script for InstructVLA on LIBERO.
+
+  **Note:** The main difference between the two training scripts is the imported VLA model variant.
+
+### Evaluation
+
+**1. Minimal Chat Example**
+
+```python
+import torch
+from vla.instructvla_eagle_dual_sys_v2_meta_query_v2 import load, load_vla
+from PIL import Image
+import numpy as np
+
+model_path = 'outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/checkpoints/step-013500-epoch-01-loss=0.1093.pt'
+
+# Load Stage-2 (Generalist) model
+model = load_vla(model_path, stage="stage2").eval().to(torch.bfloat16).cuda()
+
+messages = [
+    {"content": "You are a helpful assistant."},  # system
+    {
+        "role": "user",
+        "content": "Can you describe the main idea of this image?",
+        "image": [{'np_array': np.asarray(Image.open("./asset/teaser.png"))}]
+    }
+]
+
+# Preprocess input
+inputs = model.processor.prepare_input(dict(prompt=messages))
+autocast_dtype = torch.bfloat16
+
+with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
+    output = model.vlm.generate(
+        input_ids=inputs['input_ids'].cuda(),
+        attention_mask=inputs['attention_mask'].cuda(),
+        pixel_values=inputs['pixel_values'].cuda(),
+        max_new_tokens=100,
+        output_hidden_states=False,
+    )
+
+response = model.processor.tokenizer.decode(output[0])
+print(response)
+```
+
+**Example Output:**
+
+```
+The image illustrates a process involving multimodal web data, vision-language knowledge, instruction tuning, and atomic instruction manipulation. 
+It shows a circular diagram with four main components: vision, language, action, and instruction. 
+The diagram also includes various examples and processes, such as closed-loop reasoning evaluation, instruction tuning, and atomic instruction manipulation.<|im_end|>
+```
+
+**2. LIEBRO**
+
+**3. SimplerEnv**
+
+**4. SimplerEnv-Instruct**
+
+**5. Multimodal**
+
+Please ensure you have OpenAI API for benchmarks requiring GPT evaluation
+
+```bash
+cd mm_evaluation/vlmeval
+
+export OPENAI_API_BASE=TBD
+export OPENAI_API_KEY=sk-TBD
+
+export MASTER_PORT=$((RANDOM % 101 + 20000))
+torchrun --nproc-per-node=8 --master_port $MASTER_PORT run.py \
+         --data MMBench_DEV_EN_V11 OCRBench MMMU_DEV_VAL MMStar ChartQA_TEST DocVQA_VAL HallusionBench ScienceQA_TEST TextVQA_VAL AI2D_TEST InfoVQA_VAL RealWorldQA MMVet MME \
+         --model InstructVLA \
+         --work-dir path/to/InstructVLA/outputs/vlmeval/InstructVLA \
+         --tag results \
+         --model_path path/to/model.pt \
+         --reuse \
+         --verbose
+```
+
+
+### Train
+
+1.  Stage-1 (Expert)
+
+**Single-node pretraining**
+
+```bash
+#!/bin/bash
+export GPUS_PER_NODE=8
+export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+export MASTER_PORT=29323
+
+# Fix for: libcudnn_ops_infer.so.8 link-time reference symbol error
+export LD_LIBRARY_PATH=~/miniconda3/envs/openvla/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
+export LD_PRELOAD=~/miniconda3/envs/openvla/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.8
+
+python -m torch.distributed.run \
+  --nproc_per_node 8 --nnodes 1 --node_rank 0 \
+  --master_port $MASTER_PORT \
+  scripts/train_eagle_dual_v2_action_only_meta_query_v2.py \
+    --vla.base_vlm "ckpt/Eagle2-2B" \
+    --vla.type prism-qwen25-dinosiglip-224px+0_5b \
+    --vla.data_mix bridge_rt_1 \
+    --vla.expected_world_size 8 \
+    --vla.global_batch_size 128 \
+    --vla.per_device_batch_size 16 \
+    --vla.train_strategy 'fsdp-full-shard' \
+    --vla.learning_rate 5e-5 \
+    --data_root_dir "path/to/your/oxe" \
+    --run_root_dir ./outputs/pretraining \
+    --run_id InstructVLA_pretraining_v2_query_64_mlp_lora_single_node_bs128 \
+    --image_aug True \
+    --wandb_project "TBD" \
+    --wandb_entity "TBD" \
+    --save_interval 5000 \
+    --future_action_window_size 15 \
+    --past_action_window_size 0 \
+    --is_resume False \
+    --stage stage1 \
+    --with_pointing False \
+    --use_mm False
+```
+> For LIBERO, we recommend setting `future_action_window_size=7`, which corresponds to a chunk size of 8.
+---
+
+**Multi-node pretraining (SLURM)**
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=VLA
+#SBATCH -p efm_t
+#SBATCH -N 8                         # number of nodes
+#SBATCH --ntasks-per-node=1          # crucial: 1 task per dist per node
+#SBATCH --cpus-per-task=128          # number of cores per task
+#SBATCH --gres=gpu:8                 # GPUs per node
+#SBATCH --output=trash/%x-%j.out
+#SBATCH -e trash/%x-%j.err
+
+export GPUS_PER_NODE=8
+export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+export MASTER_PORT=$((RANDOM % 101 + 20000))
+
+# NCCL configuration (must be set correctly on your cluster)
+export NCCL_SOCKET_IFNAME=TBD
+export NCCL_IB_HCA=TBD
+export NCCL_TIMEOUT=3600  # longer timeout for stable training
+
+# Fix for: libcudnn_ops_infer.so.8 link-time reference symbol error
+export LD_LIBRARY_PATH=~/miniconda3/envs/openvla/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
+export LD_PRELOAD=~/miniconda3/envs/openvla/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.8
+
+srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
+  --nproc_per_node $GPUS_PER_NODE --nnodes $SLURM_NNODES --node_rank $SLURM_PROCID \
+  --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+  scripts/train_eagle_dual_v2_action_only_meta_query_v2.py \
+    --vla.base_vlm "/mnt/petrelfs/yangshuai1/yangshuai1/share_mllm/Eagle2-2B" \
+    --vla.type prism-qwen25-dinosiglip-224px+0_5b \
+    --vla.data_mix bridge_rt_1 \
+    --vla.expected_world_size 32 \
+    --vla.global_batch_size 1024 \
+    --vla.per_device_batch_size 32 \
+    --vla.train_strategy 'fsdp-full-shard' \
+    --vla.learning_rate 5e-5 \
+    --data_root_dir "s3://real_data_raw/open_x_embodiment_origin" \
+    --run_root_dir ./outputs/pretraining \
+    --run_id instructvla_pretraining \
+    --image_aug True \
+    --wandb_project "TBD" \
+    --wandb_entity "TBD" \
+    --save_interval 1500 \
+    --future_action_window_size 15 \
+    --past_action_window_size 0 \
+    --stage stage1 \
+    --use_mm False'
+```
+
+> We generally recommend using more than 32 A100 GPUs for training. However, training with 8 GPUs is also feasible by increasing the number of steps by a factor of 4.
+Due to the RLDS shuffling mechanism, we suggest evaluating every 1.5k steps when using 64 GPUs, and every 5k steps when using 8 GPUs.
+
+2. Stage-2 (Generalist)
+
+```bash
+srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
+  --nproc_per_node $GPUS_PER_NODE --nnodes $SLURM_NNODES --node_rank $SLURM_PROCID \
+  --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+  scripts/train_eagle_dual_v2_action_only_meta_query_v2.py \
+    --vla.base_vlm "/mnt/petrelfs/yangshuai1/yangshuai1/share_mllm/Eagle2-2B" \
+    --pretrained_checkpoint ./outputs/head_balation/instructvla_pretraining_v2_query_64_lora--image_aug/checkpoints/step-034500-epoch-08_unload_lora.pt \
+    --vla.type prism-qwen25-dinosiglip-224px+0_5b \
+    --vla.data_mix bridge_rt_1 \
+    --vla.enable_gradient_checkpointing False \
+    --vla.expected_world_size 64 \
+    --vla.global_batch_size 768 \
+    --vla.per_device_batch_size 12 \
+    --vla.train_strategy 'fsdp-full-shard' \
+    --vla.learning_rate 5e-5 \
+    --data_root_dir "s3://real_data_raw/open_x_embodiment_origin" \
+    --run_root_dir ./outputs/finetuning \
+    --run_id vision_language_action_instruction_tuning \
+    --image_aug True \
+    --wandb_project "TBD" \
+    --wandb_entity "TBD" \
+    --save_interval 1500 \
+    --future_action_window_size 15 \
+    --past_action_window_size 0 \
+    --is_resume False \
+    --stage stage2 \
+    --use_mm True \
+    --fix_system1 True \
+    --with_pointing False'
+```
+
+**Key Changes**
+
+* `--vla.enable_gradient_checkpointing False`: XLora does not support gradient checkpointing.
+* `--use_mm True`: Enables training with the general multimodal dataset.
+* `--fix_system1 True`: Freezes the pretrained action expert.
+* `--with_pointing False`: Co-training with PixMo pointing datasets is supported, but we observe little performance improvement.
+
+**Training Notes**
+
+* The best performance is usually achieved by the end of the **first epoch**.
+* Since gradient checkpointing is disabled, we use a much smaller `per_device_batch_size`, making **multi-node training necessary**.
+
+
+
+
+## 📌 TODO `<a name="todo"></a>`
+
+- [X] Release the VLA-IT dataset.
+- [X] Release the SimplerEnv-Instruct.
+- [X] Release the checkpoints and training code for post-training and finetuning.
+- [ ] More powerful InstructVLA v2.0.
+
+## 🔗 Citation `<a name="citation"></a>`
+
+If you find our work helpful, please cite:
+
+```bibtex
+
+@article{yang2025instructvla,
+  title={InstructVLA: Vision-Language-Action Instruction Tuning from Understanding to Manipulation},
+  author={Yang, Shuai and Li, Hao and Chen, Yilun and Wang, Bin and Tian, Yang and Wang, Tai and Wang, Hanqing and Zhao, Feng and Liao, Yiyi and Pang, Jiangmiao},
+  journal={arXiv preprint arXiv:2507.17520},
+  year={2025}
+}
+
+@misc{2506.19816,
+  Author = {Hao Li and Shuai Yang and Yilun Chen and Yang Tian and Xiaoda Yang and Xinyi Chen and Hanqing Wang and Tai Wang and Feng Zhao and Dahua Lin and Jiangmiao Pang},
+  Title = {CronusVLA: Transferring Latent Motion Across Time for Multi-Frame Prediction in Manipulation},
+  Year = {2025},
+  Eprint = {arXiv:2506.19816},
+  }
+```

@@ -69,7 +69,7 @@ def get_action(cfg, model, obs, task_label, server, processor=None):
         )
         assert action.shape == (ACTION_DIM,)
     elif "instruct_vla" in cfg.model_family:
-        action = server.get_cronusvla_action(
+        action = server.get_vla_action(
             model, cfg, cfg.pretrained_checkpoint, obs, task_label, cfg.unnorm_key, center_crop=cfg.center_crop
         )
         # assert action.shape == (ACTION_DIM,), 'action shape is wrong'

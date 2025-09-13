@@ -134,11 +134,11 @@ def make_dataset_from_rlds(
         REQUIRED_KEYS.add(language_key)
 
     current_file = Path(__file__).resolve()
-    annotation_root = current_file.parents[2] / "data_pipeline" / "data"
+    annotation_root = current_file.parents[4] / "data_pipeline" / "data"
 
     reasoning_dataset_paths = [
-        annotation_root / "bridge_merged.json",
-        annotation_root / "fractal_merged_long_horizon.json",
+        annotation_root / "bridge_instruction.json",
+        annotation_root / "fractal_instruction.json",
         annotation_root / "real_math.json", # optional, for real-world experiment
     ]
     reasoning_dataset = {}
@@ -239,6 +239,11 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
         
+        if reasoning_dataset is not None:
+            # get id, only available for bridge and the modified fractal
+            file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+            episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
+
         traj = {
             "observation": new_obs,
             "task": task,
@@ -249,10 +254,6 @@ def make_dataset_from_rlds(
         }
 
         if reasoning_dataset is not None:
-            # get id, only available for bridge and the modified fractal
-            file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
-            episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
-
             file_names = tf.repeat(file_name, traj_len)
             episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
             indices = tf.as_string(tf.range(traj_len))

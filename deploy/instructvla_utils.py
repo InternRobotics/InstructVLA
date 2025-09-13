@@ -212,7 +212,7 @@ class InstructVLAServer:
         return image
 
 
-    def get_cronusvla_action(self, vla, cfg, base_vla_name, obs, task_label, unnorm_key, center_crop=True):
+    def get_vla_action(self, vla, cfg, base_vla_name, obs, task_label, unnorm_key, center_crop=True):
         """Generates an action with the VLA policy."""
         all_images = [obs["full_image"]]
         all_images.extend([obs[k] for k in obs.keys() if "wrist" in k])

@@ -19,7 +19,6 @@ from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy, transfo
 from torch.nn.utils.rnn import pad_sequence
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from prismatic.models.vlms.base_vlm import VLM
 from prismatic.models.vlms.prismatic import PrismaticVLM
 from prismatic.overwatch import initialize_overwatch
 from prismatic.util.nn_utils import FusedMLPProjector, LinearProjector, MLPProjector
@@ -163,11 +162,10 @@ class InstructVLA(nn.Module):
             # The language expert is initaled from zero
             from peft import XLoraConfig
 
-            if llm_backbone_id is None:
-                empty_language_adapter = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "..", "ckpt", "empty_language_adapter")
-                )
-            
+            empty_language_adapter = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "ckpt", "empty_language_adapter")
+            )
+
             lora_config = XLoraConfig(
                 task_type="CAUSAL_LM",
                 hidden_size=token_size,
@@ -350,7 +348,7 @@ class InstructVLA(nn.Module):
             # actions_history = actions[:,0:self.past_action_window_size,:]
             actions_future = actions[:, -(self.future_action_window_size+1):, :]
             _, _, action_dim = actions_future.shape
-
+            
             loss = self.action_model( latent_action = meta_feature,
                         pixel_values = dict(dino = system1_pixel_values),
                         actions = actions_future,
@@ -493,7 +491,7 @@ class InstructVLA(nn.Module):
         image: Image, 
         instruction: str, 
         unnorm_key: Optional[str] = None, 
-        use_generate = False,
+        use_generate = True,
         cache_latent = False,
         **kwargs: str
     ) -> np.ndarray:

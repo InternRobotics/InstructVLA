@@ -69,7 +69,7 @@ class InstructVLA(BaseModel):
 
         device = torch.cuda.current_device()
         self.device = device
-        self.model = load_vla(model_path, hf_token='REMOVED_TOKEN', stage = "stage2").eval().to(torch.bfloat16)
+        self.model = load_vla(model_path, stage = "stage2").eval().to(torch.bfloat16)
         self.tokenizer = self.model.tokenizer
 
         config = self.model.vlm.config
