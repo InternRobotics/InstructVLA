@@ -1,5 +1,7 @@
 """
-cogactvla.py
+modeling_instructvla.py
+
+This file provide a simple loading function to load the **vlm part** of the InstructVLA
 
 """
 
@@ -15,18 +17,19 @@ import torch
 import torch.nn as nn
 import numpy as np
 from PIL import Image
-from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy, transformer_auto_wrap_policy
+
 from torch.nn.utils.rnn import pad_sequence
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from prismatic.models.vlms.prismatic import PrismaticVLM
-from prismatic.overwatch import initialize_overwatch
-from prismatic.util.nn_utils import FusedMLPProjector, LinearProjector, MLPProjector
 from transformers import AutoTokenizer, AutoProcessor, AutoModel
 from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 from transformers.models.siglip.modeling_siglip import SiglipEncoderLayer
+import transformers
+from packaging import version
 
+import os
+import json
 
 import time
 import timm
@@ -34,6 +37,7 @@ import random
 
 from peft import get_peft_model, LoraConfig, TaskType
 import torch.nn.functional as F
+
 
 import math
 from transformers import (
@@ -44,26 +48,17 @@ from transformers import (
     get_scheduler,
 )
 
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    CheckpointImpl,
-    apply_activation_checkpointing,
-    checkpoint_wrapper,
-)
-
-from vla.eagle_utils import EagleProcessor, extract_decoder_hidden_states, cleanup_xlora_pre_hooks, model_forward
+from .eagle_utils import EagleProcessor, extract_decoder_hidden_states, cleanup_xlora_pre_hooks, model_forward
 from types import SimpleNamespace
 from transformers import StoppingCriteria, StoppingCriteriaList
-from .action_head import ActionModelWithState
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
-overwatch = initialize_overwatch(__name__)
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
 IGNORE_INDEX = -100
 
 # This system message is JUST a placeholder
 DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant."
-
 
 class InstructVLA(nn.Module):
     def __init__(
@@ -82,7 +77,7 @@ class InstructVLA(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__()
-        self.action_model = ActionModelWithState(token_size,past_action_window_size,future_action_window_size,action_dim)
+        self.action_model = None
         
         self.vlm = vlm
         self.processor = processor
@@ -118,14 +113,14 @@ class InstructVLA(nn.Module):
 
         # Freeze all parameters in the model
         if stage == "stage1":
-            overwatch.info("Train the model in stage 1 with lora and learnable embeddings")
+            print("Train the model in stage 1 with lora and learnable embeddings")
             for param in self.vlm.parameters():
                 param.requires_grad = False
 
             lora_config = LoraConfig(
                     r=128,
                     lora_alpha=256,
-                    target_modules=['self_attn.q_proj', 'self_attn.k_proj', 'self_attn.v_proj',
+                    target_modules=['self_attn.q_proj', 'self_attn.k_proj', 'self_attn.v_proj', 
                                     'self_attn.o_proj', 'mlp.down_proj', 'mlp.up_proj'],  # adjust based on model architecture
                     lora_dropout=0.05,
                     bias="none",
@@ -152,16 +147,16 @@ class InstructVLA(nn.Module):
             self.vlm.language_model.base_model.model.lm_head.weight.register_hook(mask_old_token_grad)
             self.vlm.language_model.base_model.model.model.embed_tokens.weight.register_hook(mask_old_token_grad)
 
+
         elif stage == "stage2":
-            overwatch.info("Train the model in stage 2 with X-LoRA")
+            print("Train the model in stage 2 with X-LoRA")
 
             # We defaultly use the dense method, the inital scale of each adapter is 1/num_adapter
             # The language expert is initaled from zero
             from peft import XLoraConfig
-            from peft.tuners.lora import LoraLayer 
-            
+
             empty_language_adapter = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "ckpt", "empty_language_adapter")
+                os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "ckpt", "empty_language_adapter")
             )
 
             lora_config = XLoraConfig(
@@ -175,7 +170,7 @@ class InstructVLA(nn.Module):
                 },
             )
 
-            overwatch.warning(
+            print(
                 f"If you are initializing stage-2 training from a stage-1 model, "
                 f"you **must** replace **one of** the above empty_language_adapter with "
                 f"the unloaded LoRA module from your stage-1 model. "
@@ -186,8 +181,9 @@ class InstructVLA(nn.Module):
             self.vlm.language_model = get_peft_model(self.vlm.language_model, lora_config)
 
             new_token_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.new_tokens)
+
             new_token_ids = torch.tensor(new_token_ids, device=self.vlm.language_model.base_model.model.lm_head.weight.device)
-            # we unfreeze the embed and lm_head, but not all parameters are finetuned, the trainable weight are less than the reported
+            # we unfreeze the embed and lm_head, but not all parameters are finetuned, the trainable weight are less than the reported weight
             self.vlm.language_model.base_model.model.lm_head.weight.requires_grad = True
             self.vlm.language_model.base_model.model.model.embed_tokens.weight.requires_grad = True
 
@@ -245,7 +241,7 @@ class InstructVLA(nn.Module):
 
     @fix_system1.setter
     def fix_system1(self, value: bool):
-        overwatch.warning(f"fix_system1 is being updated to: {value}")
+        print(f"fix_system1 is being updated to: {value}")
         if value:
             for name, param in self.action_model.named_parameters():
                 param.requires_grad = False
@@ -290,15 +286,16 @@ class InstructVLA(nn.Module):
         return_dict: Optional[bool] = None,
         repeated_diffusion_steps: int = 4,
         per_device_batch_size: int = 16,
+        action_masks = None,
         image_flags = None,
+        sampling_type = None,
         t = None,
-        proprios: Optional[torch.FloatTensor] = None,
+        train_idx = 0,
         **kwargs,
     ) -> Tuple:
-        """Run a forward pass through the VLM, returning a CausalLMOutputWithPast instance (contains loss)."""
-
         if actions is None:
-
+            # standard vlm forward
+            # from IPython import embed;embed()
             per_device_batch_size = input_ids.shape[0]
             output: CausalLMOutputWithPast = self.vlm(
                 input_ids=input_ids,
@@ -314,7 +311,6 @@ class InstructVLA(nn.Module):
                 fast_loss_cal=True,
                 **kwargs,
             )
-
             return output.loss, output
         else:
 
@@ -325,6 +321,7 @@ class InstructVLA(nn.Module):
                 attention_mask=attention_mask,
                 pixel_values=pixel_values,
                 labels=labels,
+                # inputs_embeds=inputs_embeds,
                 image_flags=torch.ones((input_ids.shape[0],1)).to( device=input_ids.device) if image_flags is None else image_flags,
                 past_key_values=past_key_values,
                 use_cache=use_cache,
@@ -334,56 +331,25 @@ class InstructVLA(nn.Module):
                 fast_loss_cal=True
             )
 
-            # extract the last hidden state and the learnable EOS token feature
+            # extract the last hidden state
             last_hidden_states = output.hidden_states[-1]
             
-            # extract the cognition feature
+            # extract the latent action
             meta_feature_mask = (input_ids >= self.min_meta_token) & (input_ids <= self.max_meta_token)
             meta_feature = last_hidden_states[torch.where(meta_feature_mask==1)].view(meta_feature_mask.size(0),-1 , last_hidden_states.shape[-1])
 
             # actions_history = actions[:,0:self.past_action_window_size,:]
             actions_future = actions[:, -(self.future_action_window_size+1):, :]
             _, _, action_dim = actions_future.shape
-
-
+            
             loss = self.action_model( latent_action = meta_feature,
                         pixel_values = dict(dino = system1_pixel_values),
                         actions = actions_future,
                         t = t,
-                        proprios = proprios[:,self.past_action_window_size-1,:],
                     )
 
             return loss + output.loss, output.loss
 
-    def get_fsdp_wrapping_policy(self) -> Callable:
-        """Return an FSDP _or_policy over the policies returned by each individual backbone (and our VLM policy)."""
-
-        # Get Prismatic Wrapping Policy =>> just a module wrapping policy around `self.projector` and DiT
-
-        vit_wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={SiglipEncoderLayer})
-        transformer_block_policy_1 = partial(transformer_auto_wrap_policy, transformer_layer_cls={Qwen2DecoderLayer})
-        transformer_block_policy_2 = partial(transformer_auto_wrap_policy, transformer_layer_cls={LlamaDecoderLayer})
-
-        from transformers.models.llama.modeling_llama import LlamaMLP
-        from transformers.models.qwen2.modeling_qwen2 import Qwen2MLP
-
-        prismatic_fsdp_wrapping_policy = partial(
-            _module_wrap_policy,
-            module_classes={LinearProjector, MLPProjector, FusedMLPProjector, Qwen2MLP, LlamaMLP},
-        )
-
-        # Return union (_or_) over constituent policies
-        #   => Note: there is *not* a fall-through policy; any module that isn't covered by the above constituents will
-        #            automatically be folded into the root VLM FSDP instance.
-        return partial(
-            _or_policy,
-            policies=[
-                vit_wrap_policy,
-                transformer_block_policy_1,
-                transformer_block_policy_2,
-                prismatic_fsdp_wrapping_policy,
-            ],
-        )
 
     @classmethod
     def from_pretrained(
@@ -400,8 +366,8 @@ class InstructVLA(nn.Module):
     ) -> InstructVLA:
 
         llm_backbone_id = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "ckpt", "Eagle2-2B")
-        )
+                os.path.join(os.path.dirname(__file__), "..","..","..","..","..", "ckpt", "Eagle2-2B")
+            )
 
         # Load VLM backbone, borrowed from PrismaticVLM
         vlm = AutoModel.from_pretrained(llm_backbone_id,
@@ -422,7 +388,7 @@ class InstructVLA(nn.Module):
                                                   trust_remote_code=True)
 
         new_tokens = ['<new_token_{}>'.format(i) for i in range(num_of_meta_query)]  # Create 256 new token names
-        overwatch.info(f"add {len(new_tokens)} latent action tokens")
+        print(f"add {len(new_tokens)} latent action tokens")
         tokenizer.add_tokens(new_tokens)  # Add them to the tokenizer
         tokenizer.new_tokens = new_tokens
         processor.tokenizer = tokenizer
@@ -447,7 +413,7 @@ class InstructVLA(nn.Module):
         model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")["model"]
         is_a_lora_model = any('lora' in i for i in  model_state_dict['language_model'])
         if not is_a_lora_model:
-            overwatch.warning("No LoRA parameters in the checkpoint, so we load weight before init LoRA")
+            print("No LoRA parameters in the checkpoint, so we load weight before init LoRA")
             vlm.language_model.load_state_dict(model_state_dict["language_model"])
 
         # Initialize InstructVLA
@@ -472,15 +438,17 @@ class InstructVLA(nn.Module):
         instruct_vla.vlm.vision_model.load_state_dict(model_state_dict["vision_model"],strict=False) # The ckpt contains extra head parameters that are not use the previous transformers, but recently, the head is completely removed
 
         if is_a_lora_model:
-            overwatch.warning("LoRA parameters in the checkpoint, so we load weight after init LoRA")
+            print("LoRA parameters in the checkpoint, so we load weight after init LoRA")
             instruct_vla.vlm.language_model.load_state_dict(model_state_dict["language_model"])
         
 
         # Load ActionModel from Checkpoint
-        if "action_model" in model_state_dict:
-            instruct_vla.action_model.load_state_dict(model_state_dict["action_model"], strict=False)
-        else:
-            overwatch.warning("No Action Model found in the pretrained checkpoint. Initializing a new one.")
+        # if "action_model" in model_state_dict:
+        #     instruct_vla.action_model.load_state_dict(model_state_dict["action_model"], strict=False)
+        # else:
+        #     print("No Action Model found in the pretrained checkpoint. Initializing a new one.")
+
+        print("Since language evaluation does not require action head, the parameters are not loaded !!!!")
         return instruct_vla       
 
     @torch.inference_mode()
@@ -491,7 +459,6 @@ class InstructVLA(nn.Module):
         unnorm_key: Optional[str] = None, 
         use_generate = True,
         cache_latent = False,
-        proprio = None,
         **kwargs: str
     ) -> np.ndarray:
         """
@@ -609,13 +576,9 @@ class InstructVLA(nn.Module):
         BS, step, dim = meta_feature.shape
 
         sys1_pixel_values = dict(dino = self.action_model.default_dino_transform(image).unsqueeze(0).to(self.vlm.device))
-
-        proprio = torch.from_numpy(self.normalize_proprio(proprio, unnorm_key)).unsqueeze(0).to(device=self.vlm.device,dtype=autocast_dtype)
-
         with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
             samples = self.action_model.sampling(   latent_action = meta_feature,
                                                     pixel_values = sys1_pixel_values,
-                                                    proprios = proprio,
                                                     )
         normalized_actions = samples[0].float().cpu().numpy()
 
@@ -660,386 +623,6 @@ class InstructVLA(nn.Module):
         unnorm_key = self._check_unnorm_key(self.norm_stats, unnorm_key)
         return self.norm_stats[unnorm_key]["action"]
 
-    def normalize_proprio(self, proprio, unnorm_key):
-        proprio_norm_stats = self.norm_stats[unnorm_key]["proprio"]
-        mask = np.array(proprio_norm_stats["q99"]) != np.array(proprio_norm_stats["q01"])
-        proprio_high, proprio_low = np.array(proprio_norm_stats["q99"]), np.array(proprio_norm_stats["q01"])
-
-        normalized_proprio = np.where(
-            mask,
-            np.clip(2 * (proprio - proprio_low) / (proprio_high - proprio_low + 1e-8) - 1, -1, 1),
-            proprio
-        )
-
-        normalized_proprio[~mask] = 0
-        
-        return normalized_proprio
-
-from pathlib import Path
-from typing import Tuple, Type
-
-from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizerBase
-
-from prismatic.vla.action_tokenizer import ActionTokenizer
-from prismatic.vla.datasets import EpisodicRLDSDataset, RLDSDataset
-from transformers import AutoTokenizer, AutoProcessor
-from huggingface_hub import HfFileSystem, hf_hub_download
-import os
-import json
-
-@dataclass
-class RLDSBatchTransform:
-    action_tokenizer: ActionTokenizer
-    base_tokenizer: PreTrainedTokenizerBase
-    processor: AutoProcessor
-    image_processor: AutoProcessor
-    stage: str = "stage1"
-    disable_instruction: bool = False
-
-    caption_prompts = [
-        "Describe what’s on the table. Don’t mention the robot arm.",
-        "What objects are in the scene? Ignore the robot arm.",
-        "Tell me what you see on the table, not the robot.",
-        "Describe the items and their positions, but skip the robot.",
-        "Look at the table and describe it. Don’t include the arm.",
-        "Only talk about the objects, not the machine.",
-        "Give a short description of the scene, without the robot.",
-        "Describe the setup on the table. Leave out the robotic arm.",
-        "Focus on the objects and environment. Ignore the robot.",
-    ]
-
-    def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
-        """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
-        # dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"][0]
-        
-        # For future action predictions
-        if rlds_batch["action"].shape[0] > 1:
-            dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"]
-        else:
-            dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"][0]
-
-        img = rlds_batch["observation"]["image_primary"]
-        proprios = rlds_batch["observation"]["proprio"]
-
-        lang = rlds_batch["task"]["language_instruction"].decode().lower()
-
-        pixel_values = []
-        system1_pixel_values = []
-        input_ids = []
-        labels = []
-        # print(rlds_batch)
-
-        anno = json.loads(rlds_batch["reasonings"].decode())
-        move_primitive = anno["move_primitive"]
-        
-        # begin =============== prepare inputs for VLM ===================
-        if self.stage == 'stage1' or self.disable_instruction:
-            if random.random() < 0.2 and move_primitive is not None:
-                action_prompt = f"What action should the robot take to {lang}? Give both move primitive and action."
-                assistant_content = f"{move_primitive} " + "".join(self.processor.tokenizer.new_tokens)
-            else:
-                action_prompt = f"What action should the robot take to {lang}?"
-                assistant_content = "".join(self.processor.tokenizer.new_tokens)
-
-            prompt = [
-                {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                {
-                    "role": "user",
-                    "content": action_prompt,
-                    "image": [{'np_array': img[-1]}],
-                },
-                {
-                    "role": "assistant", 
-                    "content": assistant_content
-                }
-            ]
-        elif self.stage == 'stage2':
-
-            instruction_prob = random.random()
-            primitive_prob = random.random()
-
-            has_QA_or_cap = False
-            has_CC = False
-            has_CR = False
-
-            if anno['alt_instruction'] is not None:
-                has_QA_or_cap = True
-                if  "CR" in anno['alt_instruction'] and len(anno['alt_instruction']["CR"]): has_CR=True
-                if  "CC" in anno['alt_instruction'] and len(anno['alt_instruction']["CC"]): has_CC=True
-
-            try:
-                if 0.4 <= instruction_prob < 0.6 and has_QA_or_cap:
-                    all_optional_QA = [ 
-                        dict(
-                            question = random.sample(self.caption_prompts, 1)[0],
-                            answer = anno['alt_instruction']['Caption']
-                        )
-                    ] + anno['alt_instruction']['QA']
-                    curr_QA = random.sample(all_optional_QA, 1)[0]
-
-                    prompt = [
-                        {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                        {
-                            "role": "user",
-                            "content": curr_QA['question'],
-                            "image": [{'np_array': img[-1]}],
-                        },
-                        {
-                            "role": "assistant", 
-                            "content": curr_QA["answer"]
-                        },
-                        {
-                            "role": "user",
-                            "content": f"What action should the robot take to {lang}?",
-                        },
-                        {
-                            "role": "assistant", 
-                            "content": "".join(self.processor.tokenizer.new_tokens)
-                        },
-                    ]
-
-                elif 0.6 <= instruction_prob < 0.8 and has_CC:
-                    curr_QA = random.sample(anno['alt_instruction']["CC"], 1)[0]
-                    prompt = [
-                        {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                        {
-                            "role": "user",
-                            "content": f"What action should the robot take to {curr_QA['question']}? First answer my question.",
-                            "image": [{'np_array': img[-1]}],
-                        },
-                        {
-                            "role": "assistant", 
-                            "content": curr_QA["answer"] + " " + "".join(self.processor.tokenizer.new_tokens)
-                        }
-                    ]
-
-                elif 0.8 <= instruction_prob and has_CR:
-                    curr_QA = random.sample(anno['alt_instruction']["CR"], 1)[0]
-                    prompt = [
-                        {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                        {
-                            "role": "user",
-                            "content": f"What action should the robot take to {curr_QA['question']}? First answer my question.",
-                            "image": [{'np_array': img[-1]}],
-                        },
-                        {
-                            "role": "assistant", 
-                            "content": curr_QA["answer"] + " " + "".join(self.processor.tokenizer.new_tokens)
-                        }
-                    ]
-                else:
-                    raise ValueError()
-
-            except Exception as e:
-                if primitive_prob < 0.2:
-                    action_prompt = f"What action should the robot take to {lang}? Give both move primitive and action."
-                    assistant_content = f"{move_primitive} " + "".join(self.processor.tokenizer.new_tokens)
-                else:
-                    action_prompt = f"What action should the robot take to {lang}?"
-                    assistant_content = "".join(self.processor.tokenizer.new_tokens)
-
-                prompt = [
-                    {"role": "system", "content": DEFAULT_SYSTEM_MESSAGE},
-                    {
-                        "role": "user",
-                        "content": action_prompt,
-                        "image": [{'np_array': img[-1]}],
-                    },
-                    {
-                        "role": "assistant", 
-                        "content": assistant_content
-                    }
-                ]
-        else:
-            raise NotImplementedError(f'which stage ???')
-
-        inputs = self.processor.preprocess_inputs_and_labels({"prompt": prompt})
-
-        pixel_values.append(inputs['pixel_values'])
-        img_array = np.squeeze(img[-1]).astype(np.uint8)
-        pil_img = Image.fromarray(img_array)
-
-        input_ids.append(inputs['input_ids'].unsqueeze(0))
-        labels.append(inputs['labels'].unsqueeze(0))
-
-        # end =============== prepare inputs for VLM ===================
-
-        # begin ============= prepare inputs for action expert ===============
-
-        for i in img:
-            img_array = np.squeeze(i).astype(np.uint8)
-            pil_img = Image.fromarray(img_array)
-            system1_pixel_values.append(self.image_processor(pil_img))
-
-        # end =============== prepare inputs for action expert ===============
-
-        pixel_values = torch.stack(pixel_values)
-        system1_pixel_values = torch.stack(system1_pixel_values)
-        input_ids = torch.cat(input_ids, dim=0)
-        labels = torch.cat(labels, dim=0)
-
-        if rlds_batch["action"].shape[0] > 1:
-            action = torch.tensor(action, dtype=torch.float32)
-            action_mask = None
-            if "action_mask" in rlds_batch:
-                action_mask = torch.tensor(rlds_batch["action_mask"], dtype=torch.bool)
-
-        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, 
-                    dataset_name=dataset_name, actions=action, action_masks=action_mask, 
-                    episode_idx=rlds_batch["idx"], frame_idx=rlds_batch['frame_idx'],
-                    system1_pixel_values=system1_pixel_values,
-                    proprios = torch.tensor(proprios, dtype=torch.float32)
-                    )
-
-from torch.utils.data import DataLoader, Dataset, DistributedSampler, IterableDataset
-from itertools import cycle
-
-@dataclass
-class PaddedCollatorForActionPrediction:
-    model_max_length: int
-    pad_token_id: int
-    padding_side: str = "right"
-    pixel_values_dtype: torch.dtype = torch.float32
-    mm_dataloader: DataLoader = None
-
-    def __call__(self, instances: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-
-        batch_pixel_values   = [inst["pixel_values"]            for inst in instances]  # List[Tensor], each [M_i, C, H, W]
-        system1_pixel_values = [inst["system1_pixel_values"]    for inst in instances]  # List[Tensor], each [M_i, C, H, W]
-        batch_input_ids      = [inst["input_ids"]               for inst in instances]  # List[Tensor], each [M_i, seq_len]
-        batch_labels         = [inst["labels"]                  for inst in instances]  
-
-
-        assert self.padding_side == "right", f"Invalid Tokenizer `padding_side={self.padding_side}`, must be 'right'"
-        all_input_ids = []
-        all_labels    = []
-        for i in range(len(batch_input_ids)):
-            for row_ids in batch_input_ids[i]:   # shape (seq_len_i,)
-                all_input_ids.append(row_ids)
-            for row_lbl in batch_labels[i]:      # shape (seq_len_i,)
-                all_labels.append(row_lbl)
-
-        input_ids = pad_sequence(all_input_ids, batch_first=True, padding_value=self.pad_token_id)
-        labels    = pad_sequence(all_labels,    batch_first=True, padding_value=IGNORE_INDEX)
-
-        # truncate if needed: model_max_length
-        if input_ids.shape[1] > self.model_max_length:
-            input_ids = input_ids[:, : self.model_max_length]
-            labels    = labels[:, : self.model_max_length]
-
-        attention_mask = input_ids.ne(self.pad_token_id)
-        system1_pixel_values = torch.cat(system1_pixel_values, dim=0).to(self.pixel_values_dtype).squeeze(1)
-        pixel_values = torch.cat(batch_pixel_values, dim=0).to(self.pixel_values_dtype).squeeze(1)
-
-        if "dataset_name" in instances[0]:
-            dataset_names = [instance["dataset_name"] for instance in instances]
-        else:
-            dataset_names = None
-
-        # Adding continuous actions and batch processing.
-        actions = [instance["actions"] for instance in instances]
-        actions = torch.stack(actions)
-        action_masks = [instance["action_masks"] for instance in instances]
-        action_masks = torch.stack(action_masks)
-
-        proprios = [instance["proprios"] for instance in instances]
-        proprios = torch.stack(proprios)
-
-        output = dict(
-            pixel_values=pixel_values,
-            system1_pixel_values=system1_pixel_values,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-            actions=actions,
-            action_masks=action_masks,
-            episode_idx=[instance['episode_idx'] for instance in instances] if 'episode_idx' in instances[0] else None,
-            frame_idx=[instance['frame_idx'] for instance in instances] if 'frame_idx' in instances[0] else None,
-            image_flags = torch.ones((input_ids.shape[0],1)),
-            proprios = proprios
-        )
-        if dataset_names is not None:
-            output["dataset_names"] = dataset_names
-
-        if self.mm_dataloader is not None:
-            # co-training VLM
-            mm_batch = next(self.mm_dataloader)
-        else:
-            mm_batch = None
-        return output, mm_batch
-
-def get_vla_dataset_and_collator(
-    data_root_dir: Path,
-    data_mix: str,
-    tokenizer: PreTrainedTokenizerBase,
-    processor: AutoProcessor,
-    image_processor: AutoProcessor,
-    default_image_resolution: Tuple[int, int, int],
-    padding_side: str = "right",
-    shuffle_buffer_size: int = 100_000,
-    train: bool = True,
-    episodic: bool = False,
-    image_aug: bool = False,
-    future_action_window_size: int = 0,
-    past_action_window_size: int = 1,         # Concatenated `past_action_window_size-1' actions and the current action for the input
-    load_all_data_for_training: bool = True,  # Load all data for training, or only a subset
-    base_action_tokenizer: PreTrainedTokenizerBase = None,
-    mm_dataset = None,
-    mm_collator = None,
-    stage = "stage1",
-    disable_instruction = False,
-) -> Tuple[Dataset, ActionTokenizer, PaddedCollatorForActionPrediction]:
-    """Initialize RLDS Dataset (wraps TFDS), ActionTokenizer, and initialize transform/collation functions."""
-    if base_action_tokenizer is None:
-        action_tokenizer = None
-    else:
-        action_tokenizer = ActionTokenizer(base_action_tokenizer)
-    # action_tokenizer = ActionTokenizer(tokenizer)
-    if mm_dataset is not None:
-        sampler = DistributedSampler(
-            mm_dataset,
-            num_replicas=overwatch.world_size(),
-            rank=overwatch.rank(),
-            shuffle=True,
-            seed=42,
-            drop_last=True,
-        )
-
-        mm_dataloader = DataLoader(
-            mm_dataset,
-            batch_size=2,
-            sampler=sampler,
-            collate_fn=mm_collator,
-            num_workers=4,
-        )
-    mm_iter = iter(mm_dataloader) if mm_dataset is not None else None
-    mm_iter = cycle(mm_iter) if mm_iter is not None else None # make it infinite
-
-    batch_transform = RLDSBatchTransform(
-        action_tokenizer, tokenizer, processor, image_processor, stage, disable_instruction
-    )
-    collator = PaddedCollatorForActionPrediction(
-        tokenizer.model_max_length, tokenizer.pad_token_id, padding_side=padding_side, mm_dataloader = mm_iter
-    )
-
-    # Build RLDS Iterable Dataset
-    cls = RLDSDataset if not episodic else EpisodicRLDSDataset
-    dataset = cls(
-        data_root_dir,
-        data_mix,
-        batch_transform,
-        resize_resolution=default_image_resolution[1:],
-        shuffle_buffer_size=shuffle_buffer_size,
-        train=train,
-        future_action_window_size=future_action_window_size,
-        past_action_window_size=past_action_window_size,
-        image_aug=image_aug,
-        load_all_data_for_training=load_all_data_for_training,
-    )
-
-    return dataset, action_tokenizer, collator
-
 
 # === Load Pretrained Model ===
 def load(
@@ -1049,7 +632,7 @@ def load(
     llm_backbone_id=None,
     stage = 'stage1',
     num_of_meta_query = 64,
-) -> PrismaticVLM:
+):
 
     if llm_backbone_id is None:
         llm_backbone_id = os.path.abspath(
@@ -1058,7 +641,7 @@ def load(
 
     """Loads a pretrained PrismaticVLM from either local disk or the HuggingFace Hub."""
     if os.path.isdir(model_id_or_path):
-        overwatch.info(f"Loading from local path `{(run_dir := Path(model_id_or_path))}`")
+        print(f"Loading from local path `{(run_dir := Path(model_id_or_path))}`")
 
         # Get paths for `config.json` and pretrained checkpoint
         config_json, checkpoint_pt = run_dir / "config.json", run_dir / "checkpoints" / "latest-checkpoint.pt"
@@ -1082,7 +665,7 @@ def load(
         )
 
     new_tokens = ['<new_token_{}>'.format(i) for i in range(num_of_meta_query)]  # Create 256 new token names
-    overwatch.info(f"add {len(new_tokens)} latent action tokens")
+    print(f"add {len(new_tokens)} latent action tokens")
     tokenizer.add_tokens(new_tokens)  # Add them to the tokenizer
     tokenizer.new_tokens = new_tokens
     processor.tokenizer = tokenizer
@@ -1100,7 +683,7 @@ def load(
     new_token_ids = tokenizer.convert_tokens_to_ids(new_tokens)
 
     # Load VLM using `from_pretrained` (clobbers HF syntax... eventually should reconcile)
-    overwatch.info(f"Loading VLM [bold blue]{llm_backbone_id}[/] from Checkpoint")
+    print(f"Loading VLM [bold blue]{llm_backbone_id}[/] from Checkpoint")
     vla = InstructVLA(
         vlm = vlm,
         config_json = config_json,
@@ -1126,7 +709,7 @@ def load_vla(
     # TODO (siddk, moojink) :: Unify semantics with `load()` above; right now, `load_vla()` assumes path points to
     #   checkpoint `.pt` file, rather than the top-level run directory!
     if os.path.isfile(model_id_or_path):
-        overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(model_id_or_path))}`")
+        print(f"Loading from local checkpoint path `{(checkpoint_pt := Path(model_id_or_path))}`")
 
         # [Validate] Checkpoint Path should look like `.../<RUN_ID>/checkpoints/<CHECKPOINT_PATH>.pt`
         assert (checkpoint_pt.suffix == ".pt") and (checkpoint_pt.parent.name == "checkpoints"), "Invalid checkpoint!"
@@ -1140,7 +723,7 @@ def load_vla(
     # Otherwise =>> try looking for a match on `model_id_or_path` on the HF Hub (`model_id_or_path`)
     else:
         # Search HF Hub Repo via fsspec API
-        overwatch.info(f"Checking HF for `{(hf_path := str(Path(model_id_or_path)))}`")
+        print(f"Checking HF for `{(hf_path := str(Path(model_id_or_path)))}`")
         if not (tmpfs := HfFileSystem()).exists(hf_path):
             raise ValueError(f"Couldn't find valid HF Hub Path `{hf_path = }`")
 
@@ -1150,7 +733,7 @@ def load_vla(
 
         target_ckpt = Path(valid_ckpts[-1]).name
         model_id_or_path = str(model_id_or_path)  # Convert to string for HF Hub API
-        overwatch.info(f"Downloading Model `{model_id_or_path}` Config & Checkpoint `{target_ckpt}`")
+        print(f"Downloading Model `{model_id_or_path}` Config & Checkpoint `{target_ckpt}`")
         with overwatch.local_zero_first():
             # relpath = Path(model_type) / model_id_or_path
             config_json = hf_hub_download(
@@ -1178,11 +761,11 @@ def load_vla(
         assert num_of_meta_query == num_of_meta_query_from_config, f'you need {num_of_meta_query} meta queries, but the checkpoint is trained with {num_of_meta_query} meta queries.'
     elif num_of_meta_query is None and num_of_meta_query_from_config is None:
         num_of_meta_query = 64
-        overwatch.info(f"not specify the number of meta query, the default value is 64 !!")
+        print(f"not specify the number of meta query, the default value is 64 !!")
 
     if num_of_meta_query_from_config is not None:
         num_of_meta_query = num_of_meta_query_from_config
-    
+
     if 'stage' in config:
         training_stage_from_config = config.pop("stage")
     if 'stage' in kwargs:

@@ -2,7 +2,7 @@
 <p align="center">
   <h1 align="center"><strong>InstructVLA:<br>Vision-Language-Action Instruction Tuning<br>from Understanding to Manipulation</strong></h1>
   <p align="center">
-    <a href='' target='_blank'>Shuai Yang*</a>, <a href='' target='_blank'>Hao Li*</a>, <a href='https://yilunchen.com/about/' target='_blank'>Yilun Chen</a>, <a href='' target='_blank'>Bin Wang</a>, <a href='' target='_blank'>Yang Tian</a>, <a href='https://tai-wang.github.io/' target='_blank'>Tai Wang</a>, <br><a href='https://hanqingwangai.github.io/' target='_blank'>Hanqing Wang</a>, <a href='https://scholar.google.co.uk/citations?user=r6CvuOUAAAAJ&hl=en' target='_blank'>Feng Zhao</a>, <a href='' target='_blank'>Yiyi Liao</a>, <a href='https://oceanpang.github.io/' target='_blank'>Jiangmiao Pang</a>
+    <a href='https://scholar.google.com/citations?user=l5HWdWEAAAAJ&hl=en' target='_blank'>Shuai Yang*</a>, <a href='' target='_blank'>Hao Li*</a>, <a href='' target='_blank'>Bin Wang</a>,  <a href='https://yilunchen.com/about/' target='_blank'>Yilun Chen</a>, <a href='' target='_blank'>Yang Tian</a>, <a href='https://tai-wang.github.io/' target='_blank'>Tai Wang</a>, <br><a href='https://hanqingwangai.github.io/' target='_blank'>Hanqing Wang</a>, <a href='https://scholar.google.co.uk/citations?user=r6CvuOUAAAAJ&hl=en' target='_blank'>Feng Zhao</a>, <a href='' target='_blank'>Yiyi Liao</a>, <a href='https://oceanpang.github.io/' target='_blank'>Jiangmiao Pang</a>
     <br>
     * Equal Contributions
     <br>
@@ -100,14 +100,39 @@ pip install transformers==4.51.0 accelerate==1.3.0 peft==0.13.0
 pip install packaging ninja
 ninja --version; echo $?  # Verify Ninja --> should return exit code "0"
 pip install "flash-attn==2.5.5" --no-build-isolation
+
+pip install -r pip_requirements.txt
 ```
 
+For SimplerEnv, additional vulkan libraries are required:
+
+```bash
+# Install Vulkan runtime libraries and tools
+conda install -c conda-forge libvulkan-loader vulkan-tools -y
+```
 
 #### Benchmark Installation
 
-1. **LIBERO**: Clone the repository into the project root and follow its installation guide (`README.md`).
-2. **SimplerEnv and SimplerEnv-Instruct**: Clone the modified [ManiSkill2\_real2sim](https://github.com/YangS03/my_maniskill) under `InstructVLA/SimplerEnv`, then rename it to `ManiSkill2_real2sim`. Install both projects following their respective `README.md` files.
-3. **vlmeval**: Please follow `mm_evaluation/vlmeval/README.md`.
+**1. LIBERO**: 
+
+Clone and install the LIBERO repo:
+
+```bash
+git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
+cd LIBERO
+pip install -e .
+```
+
+Additionally, install other required packages:
+
+```bash
+cd deploy/libero
+pip install -r experiments/robot/libero/libero_requirements.txt
+```
+
+**2. SimplerEnv and SimplerEnv-Instruct**: Clone the modified [ManiSkill2\_real2sim](https://github.com/YangS03/my_maniskill) under `InstructVLA/SimplerEnv`, then rename it to `ManiSkill2_real2sim`. Install both projects following their respective `README.md` files.
+
+**3. vlmeval**: Please follow `mm_evaluation/vlmeval/README.md`.
 
 ### Project Structure
 
@@ -166,7 +191,7 @@ with torch.autocast("cuda", dtype=autocast_dtype, enabled=True):
         input_ids=inputs['input_ids'].cuda(),
         attention_mask=inputs['attention_mask'].cuda(),
         pixel_values=inputs['pixel_values'].cuda(),
-        max_new_tokens=100,
+        max_new_tokens=200,
         output_hidden_states=False,
     )
 
@@ -177,12 +202,13 @@ print(response)
 **Example Output:**
 
 ```
-The image illustrates a process involving multimodal web data, vision-language knowledge, instruction tuning, and atomic instruction manipulation. 
-It shows a circular diagram with four main components: vision, language, action, and instruction. 
-The diagram also includes various examples and processes, such as closed-loop reasoning evaluation, instruction tuning, and atomic instruction manipulation.<|im_end|>
+The image is a diagram that illustrates the process of "InstructVLA," which stands for Instruction Tuning for Visual Language Understanding. It is divided into four main sections: 1) Vision-Language Knowledge, 2) Embedded Understanding, 3) Atomic-Instruction Manipulation, and 4) Instruction-Reasoning Manipulation. Each section contains a series of images and text that describe the steps involved in the process. The diagram uses a circular flow to show the progression from understanding visual and language data to manipulating instructions.<|im_end|>
 ```
 
 **2. LIEBRO**
+
+
+
 
 **3. SimplerEnv**
 
@@ -307,7 +333,7 @@ srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
 ```
 
 > We generally recommend using more than 32 A100 GPUs for training. However, training with 8 GPUs is also feasible by increasing the number of steps by a factor of 4.
-Due to the RLDS shuffling mechanism, we suggest evaluating every 1.5k steps when using 64 GPUs, and every 5k steps when using 8 GPUs.
+Due to the RLDS shuffling mechanism, we suggest evaluating every 1.5k steps when using 32 GPUs, and every 5k steps when using 8 GPUs.
 
 2. Stage-2 (Generalist)
 

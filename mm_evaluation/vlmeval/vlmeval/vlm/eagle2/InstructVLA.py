@@ -27,7 +27,7 @@ from .utils import (build_multi_choice_prompt,
                     split_model, load_image)
 
 # Not in this dir
-from .cogactvla_eagle_dual_sys_v2_meta_query_v2 import load, load_vla
+from .modeling_instructvla import load, load_vla
 
 
 ''' python

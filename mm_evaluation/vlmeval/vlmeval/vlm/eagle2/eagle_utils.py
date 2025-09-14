@@ -21,6 +21,7 @@ from typing import List, Union
 import numpy as np
 import requests
 import torch
+import torch.nn as nn
 import torchvision.transforms as T
 from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
@@ -51,7 +52,7 @@ If you have changes in mind, please contribute back so the community can benefit
 
 import dataclasses
 from enum import IntEnum, auto
-from typing import Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Optional, Type, Union, Tuple, Any, Sequence
 
 IGNORE_INDEX = -100
 
@@ -1142,3 +1143,151 @@ def get_embeddings(
     )
     embeddings = embeddings.hidden_states[-1]
     return embeddings
+
+
+import functools
+
+# fixed in https://github.com/huggingface/peft/pull/2761
+def cleanup_xlora_pre_hooks(model, verbose=False):
+    cleaned = 0
+    for _, m in model.named_modules():
+        d = getattr(m, "_forward_pre_hooks", None)
+        if not isinstance(d, dict):
+            continue
+        for k, cb in list(d.items()):
+            is_xlora = isinstance(cb, functools.partial) and getattr(cb.func, "__name__", "") == "scalings_injection_hook"
+            if is_xlora:
+                try:
+                    d.pop(k, None)
+                    cleaned += 1
+                except Exception:
+                    pass
+    if verbose and cleaned:
+        print(f"[XLORA] cleaned {cleaned} stale pre_hooks")
+
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+def fixed_cross_entropy(
+    source: torch.Tensor,
+    target: torch.Tensor,
+    num_items_in_batch: Optional[int] = None,
+    ignore_index: int = -100,
+    **kwargs,
+) -> torch.Tensor:
+    loss = nn.functional.cross_entropy(source, target, ignore_index=ignore_index, reduction="mean")
+    return loss
+
+
+def ForCausalLMLoss(
+    logits,
+    labels,
+    vocab_size: int,
+    num_items_in_batch: Optional[int] = None,
+    ignore_index: int = -100,
+    shift_labels: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> torch.Tensor:
+    # Upcast to float if we need to compute the loss to avoid potential precision issues
+    logits = logits.float()
+
+    if shift_labels is None:
+        # Shift so that tokens < n predict n
+        labels = nn.functional.pad(labels, (0, 1), value=ignore_index)
+        shift_labels = labels[..., 1:].contiguous()
+
+    # Flatten the tokens
+    logits = logits.view(-1, vocab_size)
+    shift_labels = shift_labels.view(-1)
+    # Enable model parallelism
+    shift_labels = shift_labels.to(logits.device)
+    loss = fixed_cross_entropy(logits, shift_labels, num_items_in_batch, ignore_index, **kwargs)
+    return loss
+
+
+from transformers.cache_utils import Cache
+from transformers.models.qwen2.modeling_qwen2 import KwargsForCausalLM
+from transformers.processing_utils import Unpack
+
+# A customized language model forward with faster lm_loss calculation
+def model_forward(self):
+    def forward(
+        input_ids: torch.LongTensor = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        fast_loss_cal: bool = False,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
+        **kwargs: Unpack[KwargsForCausalLM],
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
+
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            **kwargs,
+        )
+
+        hidden_states = outputs[0]
+        loss, logits = None, None
+
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        if not fast_loss_cal: # Keep original loss logic
+            slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+            logits = self.lm_head(hidden_states[:, slice_indices, :])
+            if labels is not None:
+                loss = ForCausalLMLoss(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+        else: # since the qwen model has a vary large lm head, we only calculate the necessary part
+            logits = None
+            ignore_index = -100
+            labels_padded = nn.functional.pad(labels, (0, 1), value=ignore_index)   # (B, L+1)
+            shift_labels = labels_padded[..., 1:].contiguous()                      # (B, L)
+
+            keep_mask = shift_labels.ne(ignore_index)                               # bool, (B, L)
+
+            if  keep_mask.any():
+                # hidden_states: (B, L, H)  -->  (N_keep, V)
+                logits = self.lm_head(hidden_states[keep_mask])
+
+            loss = ForCausalLMLoss(
+                logits=logits,                               # (N_keep, V) or None
+                labels=None,                                 # unused when shift_labels passed
+                shift_labels=shift_labels[keep_mask],        # 1‑D tensor with no -100 values
+                vocab_size=self.config.vocab_size,
+                **kwargs,
+            )
+
+        if not return_dict:
+            output = (logits,) + outputs[1:]
+            return (loss,) + output if loss is not None else output
+
+        # fix xlora hook accumulation
+        if labels is None and fast_loss_cal is False: # only clean during generation
+            cleanup_xlora_pre_hooks(self.model, verbose=False)
+
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+    return forward

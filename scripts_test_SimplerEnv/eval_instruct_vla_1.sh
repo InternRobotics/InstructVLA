@@ -1,5 +1,5 @@
 # you only need to change ckpt_path
-ckpt_path="/mnt/petrelfs/yangshuai1/rep/InstructVLA_official/outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/checkpoints/step-013500-epoch-01-loss=0.1093_cot_1.pt"
+ckpt_path="/mnt/petrelfs/yangshuai1/rep/InstructVLA_official/outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction_state--image_aug/checkpoints/step-006000-epoch-01-loss=0.1724_instruct_cot_1.pt"
 
 cd ./SimplerEnv
 base_dir=$(dirname "$ckpt_path")

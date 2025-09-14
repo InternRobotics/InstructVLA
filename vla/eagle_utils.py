@@ -1275,10 +1275,13 @@ def model_forward(self):
                 **kwargs,
             )
 
-
         if not return_dict:
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
+
+        # fix xlora hook accumulation
+        if labels is None and fast_loss_cal is False: # only clean during generation
+            cleanup_xlora_pre_hooks(self.model, verbose=False)
 
         return CausalLMOutputWithPast(
             loss=loss,
