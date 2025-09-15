@@ -80,9 +80,18 @@ We use the [Bunny](https://huggingface.co/datasets/BoyaWu10/Bunny-v1_1-data/tree
 1. Download the VLM and Empty LoRA adapter from [InstructVLA\_Assets](https://huggingface.co/ShuaiYang03/InstructVLA_Assets) and place them in `ckpt/`.
 2. Download additional pretrained checkpoints from [InstructVLA-collection](https://huggingface.co/collections/ShuaiYang03/instructvla-68c2434c3615cf1597894e86).
 
-   * `instructvla_pretraining_v2_libero_xxx`: Pretrained LIBERO checkpoints.
-   * `instructvla_pretraining_v2_query_64_lora_state--image_aug` and `instructvla_pretraining_v2_query_64_lora--image_aug`: InstructVLA-Expert checkpoints (with/without robot states) trained on SimplerEnv-Instruct.
-   * `instructvla_finetune_v2_xlora_freeze_head_instruction_state--image_aug` and `instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug`: InstructVLA-Generalist checkpoints (with/without robot states) trained on SimplerEnv and SimplerEnv-Instruct.
+  | Category               | Checkpoint Name                                              | Description                                  | Notes / Recommendation                                      |
+  | ---------------------- | ------------------------------------------------------------ | -------------------------------------------- | ----------------------------------------------------------- |
+  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_goal_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_goal_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble & wrist view                             |
+  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_10_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_10_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble                                          |
+  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_object_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_object_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble                                          |
+  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_spatial_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_spatial_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble                                          |
+  | **Expert-Simpler**     | [ShuaiYang03/instructvla_pretraining_v2_query_64_lora_state · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora_state) | InstructVLA-Expert with robot states.        | Eval with robot state. Performs stronger on **SimplerEnv**. |
+  |                        | [ShuaiYang03/instructvla_pretraining_v2_query_64_lora · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora) | InstructVLA-Expert without robot states.     | –                                                           |
+  | **Generalist-Simpler** | [ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction_state · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction_state) | InstructVLA-Generalist with robot states.    | –                                                           |
+  |                        | [ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction) | InstructVLA-Generalist without robot states. | Generalizes better on **SimplerEnv-Instruct**.              |
+
+  > Some of the checkpoints are being cleaned and will be released soon.
 
    **Recommendation:**
 
@@ -184,6 +193,8 @@ pip install -e .
   **Note:** The main difference between the two training scripts is the imported VLA model variant.
 
 * **`data_pipeline`**: Data annoation pipeline.
+
+  * `data_loading_example.ipynb`: Script demonstrates how to load an episode and corresponding VLA-IT annotation.
 
 * **`mm_evaluation`**: Multimodal evaluation scrips.
 

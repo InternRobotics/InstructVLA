@@ -8,8 +8,18 @@ pip install -r requirements.txt
 ## Eval
 
 ```bash
-# eval multiple models on multiple benchmarks 
-bash submit_eval.sh "OCRBench MMStar MMMU_DEV_VAL ChartQA_TEST DocVQA_VAL HallusionBench ScienceQA_TEST MathVista_MINI TextVQA_VAL AI2D_TEST InfoVQA_VAL RealWorldQA MMVet MME"  "Eagle2-1B Eagle2-2B" work_dirs/eagel2-1b test 8
+cd mm_evaluation/vlmeval
 
-bash submit_eval.sh "OCRBench"  "Eagle2-1B Eagle2-2B" work_dirs/eagel2-1b test 8
+export OPENAI_API_BASE=TBD
+export OPENAI_API_KEY=sk-TBD
+
+export MASTER_PORT=$((RANDOM % 101 + 20000))
+torchrun --nproc-per-node=8 --master_port $MASTER_PORT run.py \
+         --data MMBench_DEV_EN_V11 OCRBench MMMU_DEV_VAL MMStar ChartQA_TEST DocVQA_VAL HallusionBench ScienceQA_TEST TextVQA_VAL AI2D_TEST InfoVQA_VAL RealWorldQA MMVet MME \
+         --model InstructVLA \
+         --work-dir path/to/InstructVLA/outputs/vlmeval/InstructVLA \
+         --tag results \
+         --model_path path/to/model.pt \
+         --reuse \
+         --verbose
 ```
