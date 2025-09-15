@@ -1,14 +1,17 @@
 #!/bin/bash
 
 # to fix: libcudnn_ops_infer.so.8 with link time referencesymbol _ZN15TracebackLoggerC1EPKc
-export LD_LIBRARY_PATH=~/miniconda3/envs/openvla/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
-export LD_PRELOAD=~/miniconda3/envs/openvla/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.8
+export LD_LIBRARY_PATH=~/miniconda3/envs/instructvla/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
+export LD_PRELOAD=~/miniconda3/envs/instructvla/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.8
 
 CKPT_LIST=(
 "path/to/checkpoint_1"
 "path/to/checkpoint_2"
 "..."
 )
+
+export PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
+export PYTHONPATH="$PROJECT_ROOT/LIBERO:$PYTHONPATH"
 
 # Loop over the checkpoint list and GPUs
 for i in "${!CKPT_LIST[@]}"; do

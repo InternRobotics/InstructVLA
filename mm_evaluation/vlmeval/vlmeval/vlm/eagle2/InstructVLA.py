@@ -69,7 +69,8 @@ class InstructVLA(BaseModel):
 
         device = torch.cuda.current_device()
         self.device = device
-        self.model = load_vla(model_path, stage = "stage2").eval().to(torch.bfloat16)
+        self.model = load_vla(model_path).eval().to(torch.bfloat16)
+        assert self.model.stage == "stage2", 'The stage-1 model dose not have QA ability'
         self.tokenizer = self.model.tokenizer
 
         config = self.model.vlm.config

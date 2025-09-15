@@ -22,6 +22,7 @@ import sys
 parent_dir = os.path.dirname(os.getcwd())
 sys.path.insert(0, parent_dir)
 sys.path.insert(0, os.getcwd())
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union

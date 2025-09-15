@@ -145,7 +145,6 @@ class InstructVLAServer:
         self.vla = load_vla(
             cfg.pretrained_checkpoint,
             load_for_training=False, 
-            action_model_type=cfg.action_model_type,
             future_action_window_size=cfg.future_action_window_size,
             past_action_window_size=cfg.horizon,
             action_dim=cfg.action_dim,
