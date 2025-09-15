@@ -30,6 +30,11 @@
   </a>
 </p>
 
+<p align="center">
+  <h5 align="center"><strong>25/9/15: We are updating the code. For any issues, please pull the latest version before reporting bugs. </strong></h5>
+</p>
+
+
 
 <!-- ## 📋 Contents
 
