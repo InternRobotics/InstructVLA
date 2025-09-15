@@ -27,7 +27,6 @@ python -m torch.distributed.run \
   --wandb_project "dual_sys_libero" \
   --wandb_entity "shuaiyang2003" \
   --save_interval 1500 \
-  --repeated_diffusion_steps 4 \
   --future_action_window_size 7 \
   --past_action_window_size 0 \
   --is_resume False \

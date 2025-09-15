@@ -14,7 +14,6 @@ bddl==3.6.0
 beautifulsoup4==4.13.4
 blinker==1.9.0
 cachetools==5.5.1
-certifi @ file:///croot/certifi_1745939216646/work/certifi
 charset-normalizer==3.4.1
 click==8.1.8
 cloudpickle==3.1.1
@@ -45,7 +44,6 @@ Farama-Notifications==0.0.4
 fastjsonschema==2.21.1
 ffmpeg==1.4
 filelock==3.17.0
-flash-attn==2.5.5
 Flask==3.1.0
 flatbuffers==25.1.24
 fonttools==4.55.6

@@ -1,0 +1,7 @@
+TOTAL_PORTS=15520
+PORTS_PER_GROUP=$((TOTAL_PORTS / ($1 * 8)))
+START_PORT=$((50000+(PORTS_PER_GROUP * $2)))
+END_PORT=$((START_PORT + PORTS_PER_GROUP -1))
+
+# 输出选择的端口范围
+echo "Selected port range for N=$N, M=$M: $START_PORT to $END_PORT"

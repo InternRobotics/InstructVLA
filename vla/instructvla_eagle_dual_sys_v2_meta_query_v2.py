@@ -291,7 +291,6 @@ class InstructVLA(nn.Module):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        repeated_diffusion_steps: int = 4,
         per_device_batch_size: int = 16,
         action_masks = None,
         image_flags = None,
@@ -491,7 +490,7 @@ class InstructVLA(nn.Module):
         image: Image, 
         instruction: str, 
         unnorm_key: Optional[str] = None, 
-        use_generate = True,
+        use_generate = False,
         cache_latent = False,
         **kwargs: str
     ) -> np.ndarray:

@@ -83,7 +83,6 @@ class TrainConfig:
     #trackers: Tuple[str, ...] = ("jsonl",)                         # Trackers to initialize (if W&B, add config!)
     wandb_project: str = ""                                         # Name of W&B project to log to (use default!)
     wandb_entity: str = ""                                          # Name of entity to log under
-    repeated_diffusion_steps: int = 8                               # Repeated steps for training action model (a diffusion model)
     load_all_data_for_training: bool = True                         # Load all training data 
     future_action_window_size: int = 15                             # Action chunking, predicting future actions + current action
     past_action_window_size: int = 0                                # Action history window size, not used now, set to be 0 
@@ -256,7 +255,6 @@ def train(cfg: TrainConfig) -> None:
         enable_mixed_precision_training=cfg.vla.enable_mixed_precision_training,
         reduce_in_full_precision=cfg.vla.reduce_in_full_precision,
         worker_init_fn=worker_init_fn,
-        repeated_diffusion_steps=cfg.repeated_diffusion_steps,
     )
     train_strategy.run_setup(run_dir=run_dir, n_train_examples=len(mm_dataset))
     if cfg.pretrained_checkpoint is not None and cfg.is_resume:

@@ -22,12 +22,11 @@ python -m torch.distributed.run \
   --vla.learning_rate 5e-5 \
   --data_root_dir "/mnt/inspurfs/efm_t/robot_data/cache/LIBERO/dataset" \
   --run_root_dir ./outputs/libero_wrist \
-  --run_id sys12_meta_query_action_only_sync_pretraining_v2_query_64_mlp_lora_libero_10_wrist_debug \
+  --run_id sys12_meta_query_action_only_sync_pretraining_v2_query_64_mlp_lora_libero_10_wrist \
   --image_aug True \
   --wandb_project "dual_sys_libero" \
   --wandb_entity "shuaiyang2003" \
   --save_interval 1500 \
-  --repeated_diffusion_steps 4 \
   --future_action_window_size 7 \
   --past_action_window_size 0 \
   --is_resume False \

@@ -67,7 +67,6 @@ class TrainingStrategy(ABC):
         reduce_in_full_precision: bool = False,
         mixed_precision_dtype: torch.dtype = torch.bfloat16,
         worker_init_fn: Optional[Callable[[int], None]] = None,
-        repeated_diffusion_steps: int = 4,
         **_: str,
     ) -> None:
         self.vlm, self.device_id, self.stage = vlm, device_id, stage
@@ -88,7 +87,6 @@ class TrainingStrategy(ABC):
         self.enable_mixed_precision_training = enable_mixed_precision_training
         self.reduce_in_full_precision = reduce_in_full_precision
         self.mixed_precision_dtype = mixed_precision_dtype
-        self.repeated_diffusion_steps = repeated_diffusion_steps
 
         # DataLoader Parameters
         self.worker_init_fn = worker_init_fn

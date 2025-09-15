@@ -318,7 +318,7 @@ if __name__ == "__main__":
 
 
     processor = EagleProcessor(
-        '/mnt/petrelfs/yangshuai1/yangshuai1/share_mllm/Eagle2-2B',
+        'ckpt/Eagle2-2B',
         max_input_tiles=1,
         model_spec=SimpleNamespace(
             num_image_token = 256,
@@ -326,16 +326,16 @@ if __name__ == "__main__":
         ),
     )
 
-    tokenizer = AutoTokenizer.from_pretrained('/mnt/petrelfs/yangshuai1/yangshuai1/share_mllm/Eagle2-2B', 
+    tokenizer = AutoTokenizer.from_pretrained('ckpt/Eagle2-2B', 
                                                 use_fast=True,
                                                 trust_remote_code=True)
     
-    # train_dataset = LazySupervisedDataset(tokenizer=tokenizer,
-    #                                       data_path='/mnt/petrelfs/yangshuai1/rep/cogact_with_history/bunny_dataset/finetune/bunny_allava_1.3m.json',
-    #                                       processor=processor)
+    train_dataset = LazySupervisedDataset(tokenizer=tokenizer,
+                                          data_path='bunny_dataset/finetune/bunny_allava_1.3m.json',
+                                          processor=processor)
 
-    train_dataset = LazyPointDetectionDataset(tokenizer=tokenizer,
-                                        processor=processor)
+    # train_dataset = LazyPointDetectionDataset(tokenizer=tokenizer,
+    #                                     processor=processor)
 
     from IPython import embed;embed()
     item = train_dataset[0]
