@@ -253,6 +253,22 @@ The image is a diagram that illustrates the process of "InstructVLA," which stan
 
 We provide four evaluation scripts in `scripts_test_SimplerEnv`. They are mostly similar. The default evaluation is configured for an 8-GPU node, and the script will distribute the evaluation evenly across GPUs. The argument `--task_suite_name` should be chosen from {`libero_spatial`, `libero_object`, `libero_goal`, `libero_10`}. The flag `--use_length` specifies how many steps of the predicted action chunk will be executed, where `-1` denotes using  action ensemble mode. 
 
+We present the success rate and standard error for each method across four task suites, averaged over three random seeds with 500 trials. “KI” denotes *knowledge insulating* from \[Driess et al., 2025].
+
+| Method                                    | Spatial    | Object     | Goal           | 10 (Long)  | Average    |
+| ----------------------------------------- | ---------- | ---------- | -------------- | ---------- | ---------- |
+| OpenVLA-7B                     | 84.7 ± 0.9 | 88.4 ± 0.8 | 79.2 ± 1.0     | 53.7 ± 1.3 | 76.5 ± 0.6 |
+| OpenVLA-OFT-7B             | 97.6 ± 0.9 | 98.4 ± 0.8 | **97.9 ± 1.0** | 94.5 ± 1.3 | 97.1 ± 0.6 |
+| SpatialVLA-2B        | 88.2 ± 0.5 | 89.9 ± 0.7 | 78.6 ± 0.6     | 55.5 ± 1.0 | 78.1 ± 0.7 |
+| π₀-2B                         | 96.8 ± 0.8 | 98.8 ± 0.9 | 95.8 ± 1.1     | 85.2 ± 1.2 | 94.2 ± 0.9 |
+| π₀-FAST-2B       | 96.4 ± 0.7 | 96.8 ± 0.7 | 88.6 ± 1.0     | 60.2 ± 1.4 | 85.5 ± 1.0 |
+| GR00T-N1-1.34B      | 94.4 ± 0.9 | 97.6 ± 1.0 | 93.0 ± 1.2     | 90.6 ± 1.0 | 93.9 ± 1.1 |
+| π₀.₅ + KI (from scratch)   | 96.6       | 97.2       | 94.6           | 84.8       | 93.3       |
+| π₀.₅ + KI (from generalist model) | 98.0       | 97.8       | 95.6           | 85.8       | 94.3       |
+| InstructVLA (w/o wrist view)              | 92.4       | 95.6       | 92.0           | 76.6       | 89.2       |
+| InstructVLA-1.5B                          | 97.3 ± 0.5 | 99.6 ± 0.0 | 96.5 ± 0.5     | 89.8 ± 1.6 | 95.8 ± 0.4 |
+
+
 **Notice:** 
 1. The way the action chunk is executed greatly affects performance. The LIBERO checkpoints we provided on Hugging Face use the ensemble mode (--use_length -1). However, the best checkpoint under ensemble execution is not necessarily the best when executing all actions sequentially.
 
