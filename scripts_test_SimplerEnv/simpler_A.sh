@@ -1,9 +1,8 @@
 # you only need to change ckpt_path
-ckpt_path="/mnt/petrelfs/yangshuai1/rep/InstructVLA_official/outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction_state--image_aug/checkpoints/step-006000-epoch-01-loss=0.1724_simpler_3.pt"
+ckpt_path="TBD"
 
-
-export LD_LIBRARY_PATH=~/miniconda3/envs/openvla-simpler/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
-export LD_PRELOAD=~/miniconda3/envs/openvla-simpler/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.8
+export LD_LIBRARY_PATH=~/miniconda3/envs/instructvla/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
+export LD_PRELOAD=~/miniconda3/envs/instructvla/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops_infer.so.8
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
 if [ -z "$1" ]; then
