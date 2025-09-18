@@ -2,7 +2,7 @@ import torch
 from transformers import AutoTokenizer, AutoConfig, AutoModel, CLIPImageProcessor
 import warnings
 from PIL import Image
-
+import argparse
 
 import pandas as pd
 import string
@@ -24,16 +24,15 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.enabled = True
 
 class InstructVLA():
-
-    INSTALL_REQ = False
-    INTERLEAVE = True
-
-    def __init__(self, model_path='path/to/step-013500-epoch-01-loss=0.1093.pt', load_in_8bit=False, version='V2.0', **kwargs):
+    def __init__(self, model_path='TBD',
+                        work_dir='TBD',
+                        **kwargs):
         assert model_path is not None
 
-        self.json_path = "./data_pipeline/language_evaluation_with_gt.json"
+        self.json_path = "./mm_evaluation/language_evaluation_with_gt.json"
         self.json = json.load(open(self.json_path))
-        self.image_path = "./data_pipeline/language_evaluation"
+        self.image_path = "./mm_evaluation/language_evaluation"
+        self.work_dir = work_dir
 
         self.caption, self.qa, self.instruction = [], [], []
 
@@ -97,11 +96,8 @@ class InstructVLA():
                 response = response,
                 gt = case["annotation"]["Caption"]
             ))
-            if count%100 == 0:
-                del self.model
-                self.load_model()
             count+=1
-        json.dump(result, open('./outputs/vlmeval/vla_it/InstructVLA/cap.json','w'),indent=4)
+        json.dump(result, open(f'{self.work_dir}/cap.json','w'),indent=4)
 
     def evaluate_QA(self):
         
@@ -118,11 +114,8 @@ class InstructVLA():
                 response = response,
                 gt = case["annotation"]["QA"][0]["answer"]
             ))
-            if count%100 == 0:
-                del self.model
-                self.load_model()
             count+=1
-        json.dump(result, open('./outputs/vlmeval/vla_it/InstructVLA/qa.json','w'),indent=4)
+        json.dump(result, open(f'{self.work_dir}/qa.json','w'),indent=4)
 
     def evaluate_instruction(self):
         
@@ -139,18 +132,42 @@ class InstructVLA():
                 response = response,
                 gt = case["annotation"]["CC"][0]["answer"]
             ))
-            if count%100 == 0:
-                del self.model
-                self.load_model()
             count+=1
-        json.dump(result, open('./outputs/vlmeval/vla_it/InstructVLA/instruct.json','w'),indent=4)
+        json.dump(result, open(f'{self.work_dir}/instruct.json','w'),indent=4)
 
 
 if __name__ == "__main__":
-    model = InstructVLA()
-    print('evaluating captioning...')
-    model.evaluate_captioning()
-    print('evaluating question-answering...')
-    model.evaluate_QA()
-    print('evaluating instruction following...')
-    model.evaluate_instruction()
+
+    parser = argparse.ArgumentParser(description="Evaluate InstructVLA on embodied language tasks.")
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/checkpoints/step-013500-epoch-01-loss=0.1093.pt",
+        help="Path to the model checkpoint."
+    )
+    parser.add_argument(
+        "--work_dir",
+        type=str,
+        default="outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/vlmeval",
+        help="Directory to save evaluation results."
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        choices=["caption", "qa", "instruction", "all"],
+        default="all",
+        help="Which evaluation task to run."
+    )
+    args = parser.parse_args()
+
+    model = InstructVLA(model_path=args.model_path, work_dir=args.work_dir)
+
+    if args.task in ["caption", "all"]:
+        print('Evaluating captioning...')
+        model.evaluate_captioning()
+    if args.task in ["qa", "all"]:
+        print('Evaluating question-answering...')
+        model.evaluate_QA()
+    if args.task in ["instruction", "all"]:
+        print('Evaluating instruction following...')
+        model.evaluate_instruction()

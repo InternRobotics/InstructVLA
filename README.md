@@ -57,7 +57,7 @@
 
 ### Download Data and Assets
 
-#### Vision-Language-Action Instruction Tuning Dataset
+#### 1. Vision-Language-Action Instruction Tuning Dataset
 
 1. Download the dataset from [VLA\_Instruction\_Tuning](https://huggingface.co/datasets/ShuaiYang03/VLA_Instruction_Tuning).
 2. Move `VLA_Instruction_Tuning/annotation/bridge_instruction.json` and `VLA_Instruction_Tuning/annotation/fractal_instruction.json` to `data_pipeline/data/`.
@@ -67,29 +67,32 @@
    * Ensure that `--run_root_dir` points to the directory containing your OXE datasets.
 4. A usage example is provided in `data_pipeline/data_loading_example.ipynb`, which previews the dataset.
 
-#### General Multimodal Dataset
+#### 2. General Multimodal Dataset
 
 We use the [Bunny](https://huggingface.co/datasets/BoyaWu10/Bunny-v1_1-data/tree/main/finetune) dataset as the multimodal source for VLA-IT training.
 
 * Download the dataset to the project root and rename the folder as `bunny_dataset`.
 * Use the 2M mixture file: `bunny_llava_allava_2m.json`.
 
+#### 3. VLA-IT Validation Set
 
-#### Pretrained Weights
+Please follow the `mm_evaluation/README.md`.
+
+#### 4. Pretrained Weights
 
 1. Download the VLM and Empty LoRA adapter from [InstructVLA\_Assets](https://huggingface.co/ShuaiYang03/InstructVLA_Assets) and place them in `ckpt/`.
 2. Download additional pretrained checkpoints from [InstructVLA-collection](https://huggingface.co/collections/ShuaiYang03/instructvla-68c2434c3615cf1597894e86).
 
   | Category               | Checkpoint Name                                              | Description                                  | Notes / Recommendation                                      |
   | ---------------------- | ------------------------------------------------------------ | -------------------------------------------- | ----------------------------------------------------------- |
-  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_goal_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_goal_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble & wrist view                             |
-  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_10_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_10_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble                                          |
-  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_object_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_object_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble                                          |
-  | **LIBERO Pretraining** | [ShuaiYang03/instructvla_pretraining_v2_libero_spatial_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_spatial_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble                                          |
-  | **Expert-Simpler**     | [ShuaiYang03/instructvla_pretraining_v2_query_64_lora_state · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora_state) | InstructVLA-Expert with robot states.        | Eval with robot state. Performs stronger on **SimplerEnv**. |
-  |                        | [ShuaiYang03/instructvla_pretraining_v2_query_64_lora · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora) | InstructVLA-Expert without robot states.     | –                                                           |
-  | **Generalist-Simpler** | [ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction_state · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction_state) | InstructVLA-Generalist with robot states.    | –                                                           |
-  |                        | [ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction) | InstructVLA-Generalist without robot states. | Generalizes better on **SimplerEnv-Instruct**.              |
+  | **LIBERO Pretraining** | [instructvla_pretraining_v2_libero_goal_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_goal_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble & wrist view                             |
+  |  | [instructvla_pretraining_v2_libero_10_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_10_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble & wrist view                                          |
+  |  | [instructvla_pretraining_v2_libero_object_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_object_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble & wrist view                                          |
+  |  | [instructvla_pretraining_v2_libero_spatial_wrist-image_aug · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_libero_spatial_wrist-image_aug) | Pretrained LIBERO checkpoints.               | Eval with Ensemble & wrist view                                          |
+  | **Expert-Simpler**     | [instructvla_pretraining_v2_query_64_lora_state · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora_state) | InstructVLA-Expert with robot states.        | Eval with robot state. Performs stronger on **SimplerEnv**. |
+  |                        | [instructvla_pretraining_v2_query_64_lora · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora) | InstructVLA-Expert without robot states.     | –                                                           |
+  | **Generalist-Simpler** | [instructvla_finetune_v2_xlora_freeze_head_instruction_state · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction_state) | InstructVLA-Generalist with robot states.    | –                                                           |
+  |                        | [instructvla_finetune_v2_xlora_freeze_head_instruction · Hugging Face](https://huggingface.co/ShuaiYang03/instructvla_finetune_v2_xlora_freeze_head_instruction) | InstructVLA-Generalist without robot states. | Generalizes better on **SimplerEnv-Instruct**.              |
 
   > Some of the checkpoints are being cleaned and will be released soon.
 
@@ -257,12 +260,12 @@ We present the success rate and standard error for each method across four task 
 
 | Method                                    | Spatial    | Object     | Goal           | 10 (Long)  | Average    |
 | ----------------------------------------- | ---------- | ---------- | -------------- | ---------- | ---------- |
-| OpenVLA-7B                     | 84.7 ± 0.9 | 88.4 ± 0.8 | 79.2 ± 1.0     | 53.7 ± 1.3 | 76.5 ± 0.6 |
-| OpenVLA-OFT-7B             | 97.6 ± 0.9 | 98.4 ± 0.8 | **97.9 ± 1.0** | 94.5 ± 1.3 | 97.1 ± 0.6 |
-| SpatialVLA-2B        | 88.2 ± 0.5 | 89.9 ± 0.7 | 78.6 ± 0.6     | 55.5 ± 1.0 | 78.1 ± 0.7 |
-| π₀-2B                         | 96.8 ± 0.8 | 98.8 ± 0.9 | 95.8 ± 1.1     | 85.2 ± 1.2 | 94.2 ± 0.9 |
+| OpenVLA-7B       | 84.7 ± 0.9 | 88.4 ± 0.8 | 79.2 ± 1.0     | 53.7 ± 1.3 | 76.5 ± 0.6 |
+| OpenVLA-OFT-7B   | 97.6 ± 0.9 | 98.4 ± 0.8 | 97.9 ± 1.0     | 94.5 ± 1.3 | 97.1 ± 0.6 |
+| SpatialVLA-2B    | 88.2 ± 0.5 | 89.9 ± 0.7 | 78.6 ± 0.6     | 55.5 ± 1.0 | 78.1 ± 0.7 |
+| π₀-2B            | 96.8 ± 0.8 | 98.8 ± 0.9 | 95.8 ± 1.1     | 85.2 ± 1.2 | 94.2 ± 0.9 |
 | π₀-FAST-2B       | 96.4 ± 0.7 | 96.8 ± 0.7 | 88.6 ± 1.0     | 60.2 ± 1.4 | 85.5 ± 1.0 |
-| GR00T-N1-1.34B      | 94.4 ± 0.9 | 97.6 ± 1.0 | 93.0 ± 1.2     | 90.6 ± 1.0 | 93.9 ± 1.1 |
+| GR00T-N1-1.34B   | 94.4 ± 0.9 | 97.6 ± 1.0 | 93.0 ± 1.2     | 90.6 ± 1.0 | 93.9 ± 1.1 |
 | π₀.₅ + KI (from scratch)   | 96.6       | 97.2       | 94.6           | 84.8       | 93.3       |
 | π₀.₅ + KI (from generalist model) | 98.0       | 97.8       | 95.6           | 85.8       | 94.3       |
 | InstructVLA (w/o wrist view)              | 92.4       | 95.6       | 92.0           | 76.6       | 89.2       |
@@ -393,6 +396,24 @@ torchrun --nproc-per-node=8 --master_port $MASTER_PORT run.py \
 
 **6. Embodied Multimodal(on VLA-IT validation set)**
 
+**1.** Inference Results
+
+```bash
+python -m mm_evaluation.VLA_IT_InstructVLA \
+  --model_path outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/checkpoints/step-013500-epoch-01-loss=0.1093.pt \
+  --work_dir outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/vlmeval \
+  --task all
+```
+
+**2.** Get Score
+
+Because we need to assess the learning-based metrics, a GPU is required. `--eval_bs` denotes the batch size used to calculate the embedding; please set it depending on your VRAM.
+
+```bash
+python mm_evaluation/Evaluator.py \
+  --directory_path outputs/release_ckpts/instructvla_finetune_v2_xlora_freeze_head_instruction--image_aug/vlmeval/cap.json \
+  --eval_bs 500
+```
 
 ### Train
 
@@ -491,8 +512,16 @@ srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
     --use_mm False'
 ```
 
-> We generally recommend using more than 32 A100 GPUs for training. However, training with 8 GPUs is also feasible by increasing the number of steps by a factor of 4.
-Due to the RLDS shuffling mechanism, we suggest evaluating every 1.5k steps when using 32 GPUs(~30K-40K steps), and every 5k steps when using 8 GPUs(~200k-300k steps).
+
+We generally recommend using more than 32 A100 GPUs for training. However, training with 8 GPUs is also feasible, *and can even yield better performance and more stable training,* by increasing the number of steps by a factor of 4.
+Due to the RLDS shuffling mechanism, we suggest evaluating every 1.5k steps when using 32 GPUs(evaluate from ~30K to ~40K steps), and every 5k steps when using 8 GPUs(evaluate from ~200k to ~300k steps).
+
+|                               | Pick Coke Can(VA) | Move Near (VA) | Drawer (VA) | Apple In Drawer (VA) | Pick Coke Can(VM) | Move Near (VM) | Drawer (VM) | Apple In Drawer (VM) | Put Spoon | Put Carrot | Stack Cube | Put Eggplant | Google Mean (1-8) | WidowX Mean (9-12) | Overall  |
+| ----------------------------- | ----------------- | -------------- | ----------- | -------------------- | ----------------- | -------------- | ----------- | -------------------- | --------- | ---------- | ---------- | ------------ | ----------------- | ------------------ | -------- |
+| [96 GPU/ BS 1536 / 34.5k steps](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora) | 92.3±0.7          | 71.9±1.3       | 61.7±0.8    | 33.1±2.5             | 79.6±1.9          | 68.3±3.1       | 52.3±3.8    | 50.3±3.8             | 43.1±6.4  | 40.3±14.6  | 9.7±9.6    | 94.4±2.4     | 60.9±0.7          | 46.9±7.5           | 56.2±2.9 |
+| [8 GPU/ BS 128 / 240k steps](https://huggingface.co/ShuaiYang03/instructvla_pretraining_v2_query_64_lora_bs128)    | 94.0±0.2          | 76.9±0.5       | 62.8±1.6    | 39.3±4.3             | 88.7±1.7          | 67.4±2.1       | 61.8±2.5    | 31.7±1.9             | 62.5±11.0 | 48.6±2.4   | 8.3±4.2    | 95.8±4.1     | 65.3±0.4          | 53.8±3.0           | 61.5±1.3 |
+
+
 
 2. Stage-2 (Generalist)
 
@@ -538,6 +567,7 @@ srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
 
 * The best performance is usually achieved by the end of the **first epoch**.
 * Since gradient checkpointing is disabled, we use a much smaller `per_device_batch_size`, making **multi-node training necessary**.
+* Currently, we use a fixed multimodal-to-manipulation ratio (see the function `get_vla_dataset_and_collator` in vla/instructvla_xxx.py, line `mm_dataloader = DataLoader`). You can adjust this ratio to experiment with other recipes.
 
 
 
